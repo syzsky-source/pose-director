@@ -8,8 +8,10 @@ import {
   Sparkles,
 } from "lucide-react";
 import MatchMeter from "./components/MatchMeter";
+import PoseGuideFrames from "./components/PoseGuideFrames";
 import PoseCanvas from "./components/PoseCanvas";
 import { POSES } from "./data/poses";
+import { TUTORIALS } from "./data/tutorials";
 import { useCamera } from "./hooks/useCamera";
 import { detectPose } from "./services/poseDetection";
 
@@ -25,6 +27,8 @@ const DEFAULT_VIDEO_SIZE = {
 export default function App() {
   const { videoRef, status, error, startCamera } = useCamera();
   const [selectedPoseIndex, setSelectedPoseIndex] = useState(0);
+  const [activeTutorialId, setActiveTutorialId] = useState("");
+  const [isTutorialLibraryOpen, setIsTutorialLibraryOpen] = useState(false);
   const [score, setScore] = useState(0);
   const [countdown, setCountdown] = useState(null);
   const [capturedImage, setCapturedImage] = useState("");
@@ -37,7 +41,21 @@ export default function App() {
   const countdownRef = useRef(null);
   const stableSinceRef = useRef(null);
   const smoothedScoreRef = useRef(null);
-  const currentPose = POSES[selectedPoseIndex];
+  const activeTutorial = TUTORIALS.find(
+    (tutorial) => tutorial.id === activeTutorialId,
+  );
+  const currentPose = activeTutorial?.pose ?? POSES[selectedPoseIndex];
+  const scoringEnabled = activeTutorial?.scoringEnabled !== false;
+  const autoCapture = activeTutorial
+    ? activeTutorial.autoCapture
+    : {
+        enabled: true,
+        threshold: READY_SCORE,
+        stableMs: STABLE_READY_MS,
+      };
+  const autoCaptureEnabled = autoCapture?.enabled !== false;
+  const readyScore = autoCapture?.threshold ?? READY_SCORE;
+  const stableReadyMs = autoCapture?.stableMs ?? STABLE_READY_MS;
 
   const resetSession = useCallback(() => {
     capturedRef.current = false;
@@ -83,7 +101,7 @@ export default function App() {
 
   useEffect(() => {
     resetSession();
-  }, [selectedPoseIndex, resetSession]);
+  }, [activeTutorialId, selectedPoseIndex, resetSession]);
 
   useEffect(() => {
     countdownRef.current = countdown;
@@ -91,13 +109,30 @@ export default function App() {
 
   useEffect(() => {
     if (status !== "ready" || capturedImage) return undefined;
+    if (!scoringEnabled) {
+      stableSinceRef.current = null;
+      smoothedScoreRef.current = null;
+      setPoseResult({
+        detected: false,
+        keypoints: null,
+      });
+      setScore(0);
+      setCountdown(null);
+      return undefined;
+    }
 
     let active = true;
     let animationFrame;
     let lastDetection = 0;
 
     const updateReadyState = (result, timestamp) => {
-      const isReady = result.detected && result.score >= READY_SCORE;
+      if (!autoCaptureEnabled) {
+        stableSinceRef.current = null;
+        if (countdownRef.current !== null) setCountdown(null);
+        return;
+      }
+
+      const isReady = result.detected && result.score >= readyScore;
 
       if (!isReady) {
         stableSinceRef.current = null;
@@ -111,7 +146,7 @@ export default function App() {
       }
 
       if (
-        timestamp - stableSinceRef.current >= STABLE_READY_MS &&
+        timestamp - stableSinceRef.current >= stableReadyMs &&
         countdownRef.current === null &&
         !capturedRef.current
       ) {
@@ -174,11 +209,21 @@ export default function App() {
       active = false;
       cancelAnimationFrame(animationFrame);
     };
-  }, [capturedImage, currentPose, status, updateVideoSize, videoRef]);
+  }, [
+    autoCaptureEnabled,
+    capturedImage,
+    currentPose,
+    readyScore,
+    scoringEnabled,
+    stableReadyMs,
+    status,
+    updateVideoSize,
+    videoRef,
+  ]);
 
   useEffect(() => {
     if (countdown === null) return undefined;
-    if (!poseResult.detected || score < READY_SCORE) {
+    if (!autoCaptureEnabled || !poseResult.detected || score < readyScore) {
       setCountdown(null);
       return undefined;
     }
@@ -192,12 +237,30 @@ export default function App() {
       1000,
     );
     return () => window.clearTimeout(timer);
-  }, [capturePhoto, countdown, poseResult.detected, score]);
+  }, [
+    autoCaptureEnabled,
+    capturePhoto,
+    countdown,
+    poseResult.detected,
+    readyScore,
+    score,
+  ]);
 
-  const isReadyToShoot = poseResult.detected && score >= READY_SCORE;
+  const isPoseQualified = scoringEnabled && poseResult.detected && score >= readyScore;
+  const isReadyToShoot = isPoseQualified && autoCaptureEnabled;
   const instructionText = poseResult.detected
     ? currentPose.instruction
     : "未检测到人体，请进入画面";
+
+  const startTutorialPractice = (tutorial) => {
+    setActiveTutorialId(tutorial.id);
+    setIsTutorialLibraryOpen(false);
+  };
+
+  const selectPose = (index) => {
+    setActiveTutorialId("");
+    setSelectedPoseIndex(index);
+  };
 
   return (
     <main className="app-shell">
@@ -254,9 +317,18 @@ export default function App() {
                 keypoints={poseResult.detected ? poseResult.keypoints : null}
                 videoSize={videoSize}
               />
+              {activeTutorial && (
+                <PoseGuideFrames
+                  pose={currentPose}
+                  score={score}
+                  scoringEnabled={scoringEnabled && poseResult.detected}
+                />
+              )}
               {!poseResult.detected && (
                 <div className="no-person-message">
-                  未检测到人体，请进入画面
+                  {scoringEnabled
+                    ? "未检测到人体，请进入画面"
+                    : "引导练习模式：请对齐画面中的分区框"}
                 </div>
               )}
               <div className="frame-corners" aria-hidden="true">
@@ -288,14 +360,28 @@ export default function App() {
                   {isReadyToShoot ? (
                     <>
                       <Check size={17} />
-                      姿势合格，稳定 1.5 秒后自动拍摄
+                      姿势合格，稳定 {stableReadyMs / 1000} 秒后自动拍摄
                     </>
+                  ) : isPoseQualified ? (
+                    <>
+                      <Check size={17} />
+                      姿势合格，继续微调
+                    </>
+                  ) : !scoringEnabled ? (
+                    activeTutorial?.pose.instruction
                   ) : (
                     instructionText
                   )}
                 </p>
               </div>
-              <MatchMeter score={score} />
+              {scoringEnabled ? (
+                <MatchMeter score={score} />
+              ) : (
+                <div className="guide-practice-badge">
+                  <strong>GUIDE</strong>
+                  <span>引导练习</span>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -318,7 +404,7 @@ export default function App() {
                 className={`pose-card ${
                   index === selectedPoseIndex ? "is-selected" : ""
                 }`}
-                onClick={() => setSelectedPoseIndex(index)}
+                onClick={() => selectPose(index)}
               >
                 <span className="pose-number">{pose.number}</span>
                 <span className="pose-card-copy">
@@ -330,6 +416,61 @@ export default function App() {
                 </span>
               </button>
             ))}
+          </div>
+
+          <div className="tutorial-library">
+            <button
+              className="tutorial-library-toggle"
+              onClick={() => setIsTutorialLibraryOpen((value) => !value)}
+            >
+              <span>
+                <small className="eyebrow">TUTORIAL LIBRARY</small>
+                姿势教程库
+              </span>
+              <strong>{isTutorialLibraryOpen ? "收起" : "打开"}</strong>
+            </button>
+
+            {activeTutorial && (
+              <div className="active-tutorial-chip">
+                当前练习：{activeTutorial.title}
+              </div>
+            )}
+
+            {isTutorialLibraryOpen && (
+              <div className="tutorial-drawer">
+                {TUTORIALS.map((tutorial) => (
+                  <article
+                    key={tutorial.id}
+                    className={`tutorial-card ${
+                      tutorial.id === activeTutorialId ? "is-active" : ""
+                    }`}
+                  >
+                    <img src={tutorial.image} alt={`${tutorial.title}效果图`} />
+                    <div className="tutorial-card-body">
+                      <div className="tutorial-card-heading">
+                        <div>
+                          <span className="eyebrow">POSE TUTORIAL</span>
+                          <h3>{tutorial.title}</h3>
+                        </div>
+                        <span>{tutorial.difficulty}</span>
+                      </div>
+                      <p>{tutorial.scene}</p>
+                      <ul>
+                        {tutorial.tips.map((tip) => (
+                          <li key={tip}>{tip}</li>
+                        ))}
+                      </ul>
+                      <button
+                        className="tutorial-practice-button"
+                        onClick={() => startTutorialPractice(tutorial)}
+                      >
+                        开始练习
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="shutter-area">
@@ -344,7 +485,13 @@ export default function App() {
             </button>
             <div>
               <strong>自动快门已开启</strong>
-              <span>匹配度达到 72% 并稳定 1.5 秒后自动倒计时。</span>
+              <span>
+                {activeTutorial && !autoCaptureEnabled
+                  ? "当前教程仅辅助评分，不强制自动拍照。"
+                  : `匹配度达到 ${readyScore}% 并稳定 ${
+                      stableReadyMs / 1000
+                    } 秒后自动倒计时。`}
+              </span>
             </div>
           </div>
         </aside>
