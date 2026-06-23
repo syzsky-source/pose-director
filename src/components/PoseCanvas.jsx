@@ -1,51 +1,66 @@
 import { useEffect, useRef } from "react";
 import { SKELETON_CONNECTIONS } from "../data/poses";
 
-function drawSkeleton(context, width, height, keypoints) {
+function getCanvasPoint(point, layout) {
+  const sourceX = point.x * layout.videoWidth;
+  const sourceY = point.y * layout.videoHeight;
+
+  return {
+    x: sourceX * layout.scale + layout.offsetX,
+    y: sourceY * layout.scale + layout.offsetY,
+  };
+}
+
+function drawSkeleton(context, width, height, keypoints, videoSize) {
   context.clearRect(0, 0, width, height);
+
+  if (!keypoints) return;
+
+  const scale = Math.max(
+    width / videoSize.videoWidth,
+    height / videoSize.videoHeight,
+  );
+  const layout = {
+    scale,
+    videoWidth: videoSize.videoWidth,
+    videoHeight: videoSize.videoHeight,
+    offsetX: (width - videoSize.videoWidth * scale) / 2,
+    offsetY: (height - videoSize.videoHeight * scale) / 2,
+  };
+
   context.save();
-  context.strokeStyle = "rgba(255, 255, 255, 0.82)";
-  context.fillStyle = "rgba(255, 255, 255, 0.9)";
-  context.lineWidth = Math.max(1.5, width / 360);
+  context.strokeStyle = "rgba(255, 255, 255, 0.88)";
+  context.fillStyle = "rgba(255, 255, 255, 0.95)";
+  context.lineWidth = Math.max(2, width / 320);
   context.lineCap = "round";
-  context.setLineDash([7, 7]);
-  context.shadowColor = "rgba(0, 0, 0, 0.35)";
-  context.shadowBlur = 5;
+  context.lineJoin = "round";
+  context.shadowColor = "rgba(0, 0, 0, 0.45)";
+  context.shadowBlur = 7;
 
   for (const [from, to] of SKELETON_CONNECTIONS) {
-    const [fromX, fromY] = keypoints[from];
-    const [toX, toY] = keypoints[to];
+    if (!keypoints[from] || !keypoints[to]) continue;
+
+    const start = getCanvasPoint(keypoints[from], layout);
+    const end = getCanvasPoint(keypoints[to], layout);
     context.beginPath();
-    context.moveTo(fromX * width, fromY * height);
-    context.lineTo(toX * width, toY * height);
+    context.moveTo(start.x, start.y);
+    context.lineTo(end.x, end.y);
     context.stroke();
   }
 
-  const [headX, headY] = keypoints.head;
-  context.beginPath();
-  context.ellipse(
-    headX * width,
-    headY * height,
-    width * 0.046,
-    height * 0.055,
-    0,
-    0,
-    Math.PI * 2,
-  );
-  context.stroke();
-
-  context.setLineDash([]);
   Object.entries(keypoints)
-    .filter(([name]) => name !== "head")
-    .forEach(([, [x, y]]) => {
+    .filter(([name]) => !["leftHip", "rightHip"].includes(name))
+    .forEach(([, point]) => {
+      const canvasPoint = getCanvasPoint(point, layout);
       context.beginPath();
-      context.arc(x * width, y * height, 2.2, 0, Math.PI * 2);
+      context.arc(canvasPoint.x, canvasPoint.y, 3.4, 0, Math.PI * 2);
       context.fill();
     });
+
   context.restore();
 }
 
-export default function PoseCanvas({ keypoints }) {
+export default function PoseCanvas({ keypoints, videoSize }) {
   const canvasRef = useRef(null);
 
   useEffect(() => {
@@ -63,14 +78,14 @@ export default function PoseCanvas({ keypoints }) {
 
       const context = canvas.getContext("2d");
       context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-      drawSkeleton(context, rect.width, rect.height, keypoints);
+      drawSkeleton(context, rect.width, rect.height, keypoints, videoSize);
     };
 
     render();
     const observer = new ResizeObserver(render);
     observer.observe(parent);
     return () => observer.disconnect();
-  }, [keypoints]);
+  }, [keypoints, videoSize]);
 
   return <canvas ref={canvasRef} className="pose-canvas" aria-hidden="true" />;
 }

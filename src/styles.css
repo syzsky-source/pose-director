@@ -205,6 +205,23 @@ button {
   pointer-events: none;
 }
 
+.no-person-message {
+  position: absolute;
+  z-index: 5;
+  top: 50%;
+  left: 50%;
+  width: min(360px, calc(100% - 48px));
+  padding: 14px 18px;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.84);
+  background: rgba(8, 8, 8, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  transform: translate(-50%, -50%);
+  backdrop-filter: blur(12px);
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+
 .frame-corners {
   position: absolute;
   inset: 7%;

@@ -14,24 +14,51 @@ import { useCamera } from "./hooks/useCamera";
 import { detectPose } from "./services/poseDetection";
 
 const COUNTDOWN_SECONDS = 3;
+const READY_SCORE = 85;
+const STABLE_READY_MS = 2000;
+const DEFAULT_VIDEO_SIZE = {
+  videoWidth: 1280,
+  videoHeight: 960,
+};
 
 export default function App() {
   const { videoRef, status, error, startCamera } = useCamera();
   const [selectedPoseIndex, setSelectedPoseIndex] = useState(0);
-  const [score, setScore] = useState(POSES[0].initialScore);
+  const [score, setScore] = useState(0);
   const [countdown, setCountdown] = useState(null);
   const [capturedImage, setCapturedImage] = useState("");
-  const detectionStartRef = useRef(performance.now());
+  const [poseResult, setPoseResult] = useState({
+    detected: false,
+    keypoints: null,
+  });
+  const [videoSize, setVideoSize] = useState(DEFAULT_VIDEO_SIZE);
   const capturedRef = useRef(false);
+  const countdownRef = useRef(null);
+  const stableSinceRef = useRef(null);
   const currentPose = POSES[selectedPoseIndex];
 
   const resetSession = useCallback(() => {
     capturedRef.current = false;
+    stableSinceRef.current = null;
     setCapturedImage("");
     setCountdown(null);
-    setScore(currentPose.initialScore);
-    detectionStartRef.current = performance.now();
-  }, [currentPose.initialScore]);
+    setScore(0);
+    setPoseResult({
+      detected: false,
+      keypoints: null,
+    });
+  }, []);
+
+  const updateVideoSize = useCallback(() => {
+    const video = videoRef.current;
+
+    if (!video?.videoWidth || !video?.videoHeight) return;
+
+    setVideoSize({
+      videoWidth: video.videoWidth,
+      videoHeight: video.videoHeight,
+    });
+  }, [videoRef]);
 
   const capturePhoto = useCallback(() => {
     const video = videoRef.current;
@@ -45,6 +72,7 @@ export default function App() {
     context.scale(-1, 1);
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
     capturedRef.current = true;
+    stableSinceRef.current = null;
     setCapturedImage(canvas.toDataURL("image/jpeg", 0.92));
     setCountdown(null);
   }, [videoRef]);
@@ -54,23 +82,71 @@ export default function App() {
   }, [selectedPoseIndex, resetSession]);
 
   useEffect(() => {
+    countdownRef.current = countdown;
+  }, [countdown]);
+
+  useEffect(() => {
     if (status !== "ready" || capturedImage) return undefined;
 
     let active = true;
     let animationFrame;
     let lastDetection = 0;
 
+    const updateReadyState = (result, timestamp) => {
+      const isReady = result.detected && result.score >= READY_SCORE;
+
+      if (!isReady) {
+        stableSinceRef.current = null;
+        if (countdownRef.current !== null) setCountdown(null);
+        return;
+      }
+
+      if (stableSinceRef.current === null) {
+        stableSinceRef.current = timestamp;
+        return;
+      }
+
+      if (
+        timestamp - stableSinceRef.current >= STABLE_READY_MS &&
+        countdownRef.current === null &&
+        !capturedRef.current
+      ) {
+        setCountdown(COUNTDOWN_SECONDS);
+      }
+    };
+
     const runDetection = async (timestamp) => {
       if (!active) return;
-      if (timestamp - lastDetection > 180) {
+
+      if (timestamp - lastDetection > 80) {
         lastDetection = timestamp;
-        const result = await detectPose(
-          videoRef.current,
-          currentPose,
-          timestamp - detectionStartRef.current,
-        );
-        if (active) setScore(result.score);
+        updateVideoSize();
+
+        try {
+          const result = await detectPose(videoRef.current, currentPose, timestamp);
+
+          if (active) {
+            setPoseResult({
+              detected: result.detected,
+              keypoints: result.keypoints,
+            });
+            setScore(result.score);
+            updateReadyState(result, timestamp);
+          }
+        } catch (detectionError) {
+          console.error("Pose detection failed", detectionError);
+          if (active) {
+            setPoseResult({
+              detected: false,
+              keypoints: null,
+            });
+            setScore(0);
+            stableSinceRef.current = null;
+            setCountdown(null);
+          }
+        }
       }
+
       animationFrame = requestAnimationFrame(runDetection);
     };
 
@@ -79,16 +155,14 @@ export default function App() {
       active = false;
       cancelAnimationFrame(animationFrame);
     };
-  }, [capturedImage, currentPose, status, videoRef]);
-
-  useEffect(() => {
-    if (score >= 85 && countdown === null && !capturedImage) {
-      setCountdown(COUNTDOWN_SECONDS);
-    }
-  }, [capturedImage, countdown, score]);
+  }, [capturedImage, currentPose, status, updateVideoSize, videoRef]);
 
   useEffect(() => {
     if (countdown === null) return undefined;
+    if (!poseResult.detected || score < READY_SCORE) {
+      setCountdown(null);
+      return undefined;
+    }
     if (countdown === 0) {
       capturePhoto();
       return undefined;
@@ -99,7 +173,12 @@ export default function App() {
       1000,
     );
     return () => window.clearTimeout(timer);
-  }, [capturePhoto, countdown]);
+  }, [capturePhoto, countdown, poseResult.detected, score]);
+
+  const isReadyToShoot = poseResult.detected && score >= READY_SCORE;
+  const instructionText = poseResult.detected
+    ? currentPose.instruction
+    : "未检测到人体，请进入画面";
 
   return (
     <main className="app-shell">
@@ -126,6 +205,7 @@ export default function App() {
             autoPlay
             muted
             playsInline
+            onLoadedMetadata={updateVideoSize}
           />
 
           {status !== "ready" && (
@@ -134,7 +214,7 @@ export default function App() {
               {status === "requesting" ? (
                 <>
                   <strong>正在连接摄像头</strong>
-                  <span>请在浏览器提示中允许摄像头访问</span>
+                  <span>请在浏览器提示中允许摄像头访问。</span>
                 </>
               ) : (
                 <>
@@ -151,7 +231,15 @@ export default function App() {
 
           {status === "ready" && !capturedImage && (
             <>
-              <PoseCanvas keypoints={currentPose.skeleton} />
+              <PoseCanvas
+                keypoints={poseResult.detected ? poseResult.keypoints : null}
+                videoSize={videoSize}
+              />
+              {!poseResult.detected && (
+                <div className="no-person-message">
+                  未检测到人体，请进入画面
+                </div>
+              )}
               <div className="frame-corners" aria-hidden="true">
                 <i /><i /><i /><i />
               </div>
@@ -177,14 +265,14 @@ export default function App() {
             <div className="direction-panel">
               <div className="direction-copy">
                 <span className="eyebrow">导演指令 · {currentPose.number}</span>
-                <p className={score >= 85 ? "ready-message" : ""}>
-                  {score >= 85 ? (
+                <p className={isReadyToShoot ? "ready-message" : ""}>
+                  {isReadyToShoot ? (
                     <>
                       <Check size={17} />
-                      姿势很好，3 秒后拍摄
+                      姿势很好，稳定 2 秒后自动拍摄
                     </>
                   ) : (
-                    currentPose.instruction
+                    instructionText
                   )}
                 </p>
               </div>
@@ -237,7 +325,7 @@ export default function App() {
             </button>
             <div>
               <strong>自动快门已开启</strong>
-              <span>匹配度达到 85% 后自动拍摄</span>
+              <span>匹配度达到 85% 并稳定 2 秒后自动倒计时。</span>
             </div>
           </div>
         </aside>

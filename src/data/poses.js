@@ -4,8 +4,6 @@ export const POSES = [
     number: "01",
     name: "街头酷感",
     instruction: "左肩向前，重心落在后腿，视线越过镜头。",
-    initialScore: 48,
-    targetScore: 91,
     skeleton: {
       head: [0.5, 0.16],
       neck: [0.5, 0.25],
@@ -27,8 +25,6 @@ export const POSES = [
     number: "02",
     name: "杂志站姿",
     instruction: "一手轻扶腰侧，肩线放松，下巴微微抬起。",
-    initialScore: 55,
-    targetScore: 94,
     skeleton: {
       head: [0.5, 0.15],
       neck: [0.49, 0.24],
@@ -50,8 +46,6 @@ export const POSES = [
     number: "03",
     name: "松弛侧身",
     instruction: "身体侧转约 45 度，双手自然靠近脸侧。",
-    initialScore: 42,
-    targetScore: 89,
     skeleton: {
       head: [0.52, 0.16],
       neck: [0.5, 0.25],
@@ -71,6 +65,7 @@ export const POSES = [
 ];
 
 export const SKELETON_CONNECTIONS = [
+  ["head", "neck"],
   ["neck", "leftShoulder"],
   ["neck", "rightShoulder"],
   ["leftShoulder", "leftElbow"],
