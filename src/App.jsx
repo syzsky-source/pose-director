@@ -14,8 +14,9 @@ import { useCamera } from "./hooks/useCamera";
 import { detectPose } from "./services/poseDetection";
 
 const COUNTDOWN_SECONDS = 3;
-const READY_SCORE = 85;
-const STABLE_READY_MS = 2000;
+const READY_SCORE = 72;
+const STABLE_READY_MS = 1500;
+const SCORE_SMOOTHING_ALPHA = 0.38;
 const DEFAULT_VIDEO_SIZE = {
   videoWidth: 1280,
   videoHeight: 960,
@@ -35,11 +36,13 @@ export default function App() {
   const capturedRef = useRef(false);
   const countdownRef = useRef(null);
   const stableSinceRef = useRef(null);
+  const smoothedScoreRef = useRef(null);
   const currentPose = POSES[selectedPoseIndex];
 
   const resetSession = useCallback(() => {
     capturedRef.current = false;
     stableSinceRef.current = null;
+    smoothedScoreRef.current = null;
     setCapturedImage("");
     setCountdown(null);
     setScore(0);
@@ -73,6 +76,7 @@ export default function App() {
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
     capturedRef.current = true;
     stableSinceRef.current = null;
+    smoothedScoreRef.current = null;
     setCapturedImage(canvas.toDataURL("image/jpeg", 0.92));
     setCountdown(null);
   }, [videoRef]);
@@ -126,12 +130,26 @@ export default function App() {
           const result = await detectPose(videoRef.current, currentPose, timestamp);
 
           if (active) {
+            const nextScore = result.detected
+              ? Math.round(
+                  smoothedScoreRef.current === null
+                    ? result.score
+                    : smoothedScoreRef.current * (1 - SCORE_SMOOTHING_ALPHA) +
+                        result.score * SCORE_SMOOTHING_ALPHA,
+                )
+              : 0;
+            smoothedScoreRef.current = result.detected ? nextScore : null;
+            const smoothedResult = {
+              ...result,
+              score: nextScore,
+            };
+
             setPoseResult({
-              detected: result.detected,
-              keypoints: result.keypoints,
+              detected: smoothedResult.detected,
+              keypoints: smoothedResult.keypoints,
             });
-            setScore(result.score);
-            updateReadyState(result, timestamp);
+            setScore(smoothedResult.score);
+            updateReadyState(smoothedResult, timestamp);
           }
         } catch (detectionError) {
           console.error("Pose detection failed", detectionError);
@@ -141,6 +159,7 @@ export default function App() {
               keypoints: null,
             });
             setScore(0);
+            smoothedScoreRef.current = null;
             stableSinceRef.current = null;
             setCountdown(null);
           }
@@ -269,7 +288,7 @@ export default function App() {
                   {isReadyToShoot ? (
                     <>
                       <Check size={17} />
-                      姿势很好，稳定 2 秒后自动拍摄
+                      姿势合格，稳定 1.5 秒后自动拍摄
                     </>
                   ) : (
                     instructionText
@@ -325,7 +344,7 @@ export default function App() {
             </button>
             <div>
               <strong>自动快门已开启</strong>
-              <span>匹配度达到 85% 并稳定 2 秒后自动倒计时。</span>
+              <span>匹配度达到 72% 并稳定 1.5 秒后自动倒计时。</span>
             </div>
           </div>
         </aside>

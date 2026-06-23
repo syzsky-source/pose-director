@@ -5,7 +5,17 @@ const WASM_PATH =
 const MODEL_PATH =
   "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task";
 
-const MIN_VISIBILITY = 0.5;
+const MIN_VISIBILITY = 0.45;
+const MIN_LIMB_VISIBILITY = 0.35;
+
+const LEFT_RIGHT_PAIRS = [
+  ["leftShoulder", "rightShoulder"],
+  ["leftElbow", "rightElbow"],
+  ["leftWrist", "rightWrist"],
+  ["leftHip", "rightHip"],
+  ["leftKnee", "rightKnee"],
+  ["leftAnkle", "rightAnkle"],
+];
 
 const LANDMARK_INDEXES = {
   head: 0,
@@ -124,8 +134,22 @@ function hasReliableBody(points) {
     points.leftHip,
     points.rightHip,
   ];
+  const limbPoints = [
+    points.leftElbow,
+    points.rightElbow,
+    points.leftWrist,
+    points.rightWrist,
+    points.leftKnee,
+    points.rightKnee,
+    points.leftAnkle,
+    points.rightAnkle,
+  ];
 
-  return corePoints.every((point) => point.visibility >= MIN_VISIBILITY);
+  return (
+    corePoints.every((point) => point.visibility >= MIN_VISIBILITY) &&
+    limbPoints.filter((point) => point.visibility >= MIN_LIMB_VISIBILITY)
+      .length >= 6
+  );
 }
 
 function toVector(from, to) {
@@ -173,10 +197,41 @@ function buildTemplatePoints(template) {
     ]),
   );
 
-  points.leftHip = points.hip;
-  points.rightHip = points.hip;
+  if (!points.leftHip || !points.rightHip) {
+    const hipSpread = 0.08;
+    points.leftHip = {
+      ...points.hip,
+      x: clamp01(points.hip.x - hipSpread),
+    };
+    points.rightHip = {
+      ...points.hip,
+      x: clamp01(points.hip.x + hipSpread),
+    };
+  }
 
   return points;
+}
+
+function mirrorPoint(point) {
+  return {
+    ...point,
+    x: clamp01(1 - point.x),
+  };
+}
+
+function mirrorTemplatePoints(points) {
+  const mirrored = {};
+
+  for (const [name, point] of Object.entries(points)) {
+    mirrored[name] = mirrorPoint(point);
+  }
+
+  for (const [leftName, rightName] of LEFT_RIGHT_PAIRS) {
+    mirrored[leftName] = mirrorPoint(points[rightName]);
+    mirrored[rightName] = mirrorPoint(points[leftName]);
+  }
+
+  return mirrored;
 }
 
 function postureScale(points) {
@@ -193,7 +248,7 @@ function postureScale(points) {
 }
 
 function scoreFromDistance(distance, tolerance) {
-  return Math.max(0, 1 - distance / tolerance);
+  return Math.max(0, 1 - Math.pow(distance / tolerance, 1.35));
 }
 
 function scoreAngles(points, templatePoints) {
@@ -222,7 +277,7 @@ function scoreAngles(points, templatePoints) {
     );
     const score = scoreFromDistance(
       angleDifference(currentAngle, templateAngle),
-      name.includes("Elbow") || name.includes("Knee") ? 70 : 55,
+      name.includes("Elbow") || name.includes("Knee") ? 96 : 82,
     );
 
     total += score * weight;
@@ -248,14 +303,14 @@ function scoreBodyLines(points, templatePoints) {
     points.rightShoulder,
     templatePoints.leftShoulder,
     templatePoints.rightShoulder,
-    38,
+    58,
   );
   const torsoLine = scoreLine(
     points.neck,
     points.hip,
     templatePoints.neck,
     templatePoints.hip,
-    35,
+    54,
   );
 
   return shoulderLine * 0.45 + torsoLine * 0.55;
@@ -286,7 +341,7 @@ function scoreLimbPositions(points, templatePoints) {
       currentOffset.y - targetOffset.y,
     );
 
-    total += scoreFromDistance(distance, 1.45);
+    total += scoreFromDistance(distance, 2.15);
     count += 1;
   }
 
@@ -295,12 +350,23 @@ function scoreLimbPositions(points, templatePoints) {
 
 function calculateMatchScore(points, template) {
   const templatePoints = buildTemplatePoints(template);
+  const normalScore = calculateTemplateScore(points, templatePoints);
+  const mirroredScore = calculateTemplateScore(
+    points,
+    mirrorTemplatePoints(templatePoints),
+  );
+
+  return Math.round(Math.max(normalScore, mirroredScore));
+}
+
+function calculateTemplateScore(points, templatePoints) {
   const angleScore = scoreAngles(points, templatePoints);
   const bodyLineScore = scoreBodyLines(points, templatePoints);
   const limbScore = scoreLimbPositions(points, templatePoints);
-  const score = angleScore * 0.46 + bodyLineScore * 0.24 + limbScore * 0.3;
+  const rawScore = angleScore * 0.42 + bodyLineScore * 0.23 + limbScore * 0.35;
+  const calibratedScore = 12 + rawScore * 88;
 
-  return Math.round(score * 100);
+  return Math.min(100, Math.max(0, calibratedScore));
 }
 
 export async function detectPose(videoElement, template, timestamp) {
