@@ -322,6 +322,7 @@ export default function App() {
                   pose={currentPose}
                   score={score}
                   scoringEnabled={scoringEnabled && poseResult.detected}
+                  videoSize={videoSize}
                 />
               )}
               {!poseResult.detected && (

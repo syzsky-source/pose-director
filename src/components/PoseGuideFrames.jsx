@@ -1,3 +1,5 @@
+import { useEffect, useRef, useState } from "react";
+
 const GUIDE_ZONES = [
   {
     id: "head",
@@ -43,6 +45,31 @@ const GUIDE_ZONES = [
   },
 ];
 
+function getStagePoint(point, layout) {
+  const sourceX = point[0] * layout.videoWidth;
+  const sourceY = point[1] * layout.videoHeight;
+
+  return {
+    x: sourceX * layout.scale + layout.offsetX,
+    y: sourceY * layout.scale + layout.offsetY,
+  };
+}
+
+function getCoverLayout(stageWidth, stageHeight, videoSize) {
+  const scale = Math.max(
+    stageWidth / videoSize.videoWidth,
+    stageHeight / videoSize.videoHeight,
+  );
+
+  return {
+    scale,
+    videoWidth: videoSize.videoWidth,
+    videoHeight: videoSize.videoHeight,
+    offsetX: (stageWidth - videoSize.videoWidth * scale) / 2,
+    offsetY: (stageHeight - videoSize.videoHeight * scale) / 2,
+  };
+}
+
 function getGuideState(score, scoringEnabled) {
   if (!scoringEnabled) return "neutral";
   if (score >= 72) return "ready";
@@ -50,41 +77,99 @@ function getGuideState(score, scoringEnabled) {
   return "idle";
 }
 
-function getGuideBox(skeleton, zone) {
+function getGuideBox(skeleton, zone, layout, stageWidth, stageHeight) {
   const points = zone.points
     .map((name) => skeleton[name])
     .filter(Boolean)
-    .map(([x, y]) => ({ x, y }));
+    .map((point) => getStagePoint(point, layout));
 
   const minX = Math.min(...points.map((point) => point.x));
   const maxX = Math.max(...points.map((point) => point.x));
   const minY = Math.min(...points.map((point) => point.y));
   const maxY = Math.max(...points.map((point) => point.y));
+  const left = Math.max(0, minX - zone.paddingX * stageWidth);
+  const top = Math.max(0, minY - zone.paddingY * stageHeight);
+  const right = Math.min(stageWidth, maxX + zone.paddingX * stageWidth);
+  const bottom = Math.min(stageHeight, maxY + zone.paddingY * stageHeight);
 
   return {
-    left: `${Math.max(0, minX - zone.paddingX) * 100}%`,
-    top: `${Math.max(0, minY - zone.paddingY) * 100}%`,
-    width: `${Math.min(1, maxX + zone.paddingX) * 100 - Math.max(0, minX - zone.paddingX) * 100}%`,
-    height: `${Math.min(1, maxY + zone.paddingY) * 100 - Math.max(0, minY - zone.paddingY) * 100}%`,
+    left: `${(left / stageWidth) * 100}%`,
+    top: `${(top / stageHeight) * 100}%`,
+    width: `${((right - left) / stageWidth) * 100}%`,
+    height: `${((bottom - top) / stageHeight) * 100}%`,
   };
 }
 
-export default function PoseGuideFrames({ pose, score, scoringEnabled = true }) {
+function useElementSize() {
+  const ref = useRef(null);
+  const [size, setSize] = useState({
+    width: 0,
+    height: 0,
+  });
+
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) return undefined;
+
+    const updateSize = () => {
+      const rect = element.getBoundingClientRect();
+      setSize({
+        width: rect.width,
+        height: rect.height,
+      });
+    };
+
+    updateSize();
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  return [ref, size];
+}
+
+export default function PoseGuideFrames({
+  pose,
+  score,
+  scoringEnabled = true,
+  videoSize,
+}) {
+  const [containerRef, stageSize] = useElementSize();
+
   if (!pose?.skeleton) return null;
 
   const state = getGuideState(score, scoringEnabled);
+  const canLayout =
+    stageSize.width > 0 &&
+    stageSize.height > 0 &&
+    videoSize?.videoWidth > 0 &&
+    videoSize?.videoHeight > 0;
+  const layout = canLayout
+    ? getCoverLayout(stageSize.width, stageSize.height, videoSize)
+    : null;
 
   return (
-    <div className={`pose-guide-frames is-${state}`} aria-hidden="true">
-      {GUIDE_ZONES.map((zone) => (
-        <div
-          key={zone.id}
-          className={`guide-zone guide-zone-${zone.id}`}
-          style={getGuideBox(pose.skeleton, zone)}
-        >
-          <span>{zone.label}</span>
-        </div>
-      ))}
+    <div
+      ref={containerRef}
+      className={`pose-guide-frames is-${state}`}
+      aria-hidden="true"
+    >
+      {layout &&
+        GUIDE_ZONES.map((zone) => (
+          <div
+            key={zone.id}
+            className={`guide-zone guide-zone-${zone.id}`}
+            style={getGuideBox(
+              pose.skeleton,
+              zone,
+              layout,
+              stageSize.width,
+              stageSize.height,
+            )}
+          >
+            <span>{zone.label}</span>
+          </div>
+        ))}
     </div>
   );
 }

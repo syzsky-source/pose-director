@@ -1,7 +1,9 @@
-@import url("https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap");
-
 :root {
-  font-family: "Noto Sans SC", sans-serif;
+  --font-sans: "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", system-ui,
+    -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "Cascadia Mono", "SFMono-Regular", Consolas, "Liberation Mono",
+    monospace;
+  font-family: var(--font-sans);
   color: #f5f5f4;
   background: #090909;
   font-synthesis: none;
@@ -85,7 +87,7 @@ button {
 .eyebrow {
   margin: 2px 0 0;
   color: #737373;
-  font: 500 9px/1.2 "DM Mono", monospace;
+  font: 500 9px/1.2 var(--font-mono);
 }
 
 .session-status {
@@ -113,7 +115,7 @@ button {
   padding: 5px 7px;
   border: 1px solid #404040;
   color: #a3a3a3;
-  font: 500 9px "DM Mono", monospace;
+  font: 500 9px var(--font-mono);
 }
 
 .studio {
@@ -130,6 +132,7 @@ button {
 
 .camera-stage {
   position: relative;
+  z-index: 0;
   min-width: 0;
   min-height: 590px;
   aspect-ratio: 4 / 3;
@@ -253,7 +256,7 @@ button {
   color: currentColor;
   background: rgba(8, 8, 8, 0.74);
   border: 1px solid currentColor;
-  font: 500 8px "DM Mono", monospace;
+  font: 500 8px var(--font-mono);
   white-space: nowrap;
 }
 
@@ -338,7 +341,7 @@ button {
   display: flex;
   gap: 15px;
   color: rgba(255, 255, 255, 0.68);
-  font: 400 9px "DM Mono", monospace;
+  font: 400 9px var(--font-mono);
 }
 
 .direction-panel {
@@ -418,13 +421,13 @@ button {
 }
 
 .meter-copy strong {
-  font: 500 17px "DM Mono", monospace;
+  font: 500 17px var(--font-mono);
 }
 
 .meter-copy span {
   margin-top: 1px;
   color: #737373;
-  font: 400 7px "DM Mono", monospace;
+  font: 400 7px var(--font-mono);
 }
 
 .meter-status {
@@ -456,7 +459,7 @@ button {
 }
 
 .countdown-number {
-  font: 300 104px/1 "Noto Sans SC", sans-serif;
+  font: 300 104px/1 var(--font-sans);
   animation: count-in 850ms ease-out;
 }
 
@@ -472,6 +475,8 @@ button {
 }
 
 .control-panel {
+  position: relative;
+  z-index: 8;
   min-width: 0;
   min-height: 590px;
   padding: 26px 22px 22px;
@@ -495,7 +500,7 @@ button {
 
 .pose-count {
   color: #737373;
-  font: 400 10px "DM Mono", monospace;
+  font: 400 10px var(--font-mono);
 }
 
 .pose-list {
@@ -546,7 +551,7 @@ button {
   align-self: start;
   padding-top: 2px;
   color: #626262;
-  font: 400 9px "DM Mono", monospace;
+  font: 400 9px var(--font-mono);
 }
 
 .pose-card-copy {
@@ -761,7 +766,7 @@ button {
 }
 
 .guide-practice-badge strong {
-  font: 500 13px "DM Mono", monospace;
+  font: 500 13px var(--font-mono);
 }
 
 .guide-practice-badge span {
@@ -900,7 +905,7 @@ button {
   gap: 6px;
   color: #d4d4d4;
   background: rgba(0, 0, 0, 0.58);
-  font: 400 8px "DM Mono", monospace;
+  font: 400 8px var(--font-mono);
   backdrop-filter: blur(8px);
 }
 
@@ -936,7 +941,7 @@ footer {
   align-items: center;
   color: #525252;
   border-top: 1px solid #262626;
-  font: 400 8px "DM Mono", monospace;
+  font: 400 8px var(--font-mono);
 }
 
 footer span {
@@ -951,7 +956,7 @@ footer span:last-child {
 
 footer p {
   margin: 0;
-  font-family: "Noto Sans SC", sans-serif;
+  font-family: var(--font-sans);
   font-size: 10px;
 }
 
