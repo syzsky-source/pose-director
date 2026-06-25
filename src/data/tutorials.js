@@ -20,6 +20,13 @@ export const TUTORIALS = [
       number: "T01",
       name: "压迫感抱臂",
       instruction: "双臂交叉，肩膀打开，下巴微收，保持稳定气场。",
+      shotType: "halfBody",
+      autoCapture: {
+        enabled: true,
+        threshold: 72,
+        stableMs: 1500,
+      },
+      hardRules: ["crossedArms", "frontFacing", "levelShoulders"],
       skeleton: {
         head: [0.5, 0.16],
         neck: [0.5, 0.25],
@@ -60,6 +67,13 @@ export const TUTORIALS = [
       number: "T02",
       name: "冷静正立",
       instruction: "身体正立，肩线放平，双手自然下垂，视线保持冷静。",
+      shotType: "fullBody",
+      autoCapture: {
+        enabled: true,
+        threshold: 70,
+        stableMs: 1200,
+      },
+      hardRules: ["frontFacing", "handsDown", "levelShoulders", "levelHips", "stableLegs"],
       skeleton: {
         head: [0.5, 0.16],
         neck: [0.5, 0.25],
@@ -98,6 +112,13 @@ export const TUTORIALS = [
       number: "T03",
       name: "侧身插袋回头",
       instruction: "身体侧向，单手插袋，头部回看镜头，保持自然松弛。",
+      shotType: "threeQuarter",
+      autoCapture: {
+        enabled: false,
+        threshold: 76,
+        stableMs: 1600,
+      },
+      hardRules: ["sideFacing", "handsAtWaist", "feetStaggered"],
       skeleton: {
         head: [0.53, 0.16],
         neck: [0.5, 0.25],
@@ -137,6 +158,13 @@ export const TUTORIALS = [
       number: "T04",
       name: "大佬感站姿",
       instruction: "双脚站稳，肩膀打开，身体微微前压，保持强气场。",
+      shotType: "fullBody",
+      autoCapture: {
+        enabled: false,
+        threshold: 78,
+        stableMs: 1600,
+      },
+      hardRules: ["frontFacing", "levelShoulders", "stableLegs", "weightShift"],
       skeleton: {
         head: [0.5, 0.15],
         neck: [0.5, 0.25],
@@ -162,7 +190,7 @@ export const TUTORIALS = [
     image: "/tutorial_cards/狠厉坐姿教程卡.png",
     scene: "情绪大片 / 剧照感 / 角色写真",
     difficulty: "进阶",
-    scoringEnabled: false,
+    scoringEnabled: true,
     autoCapture: {
       enabled: false,
     },
@@ -177,6 +205,13 @@ export const TUTORIALS = [
       number: "T05",
       name: "狠厉坐姿",
       instruction: "坐姿前倾，手臂找到支点，眼神集中，先按引导框练习。",
+      shotType: "halfBody",
+      autoCapture: {
+        enabled: false,
+        threshold: 76,
+        stableMs: 1600,
+      },
+      hardRules: ["frontFacing", "handsAtWaist", "levelShoulders"],
       skeleton: {
         head: [0.5, 0.18],
         neck: [0.5, 0.3],

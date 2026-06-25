@@ -110,12 +110,24 @@ button {
   box-shadow: none;
 }
 
-.raw-badge {
+.debug-toggle {
   justify-self: end;
-  padding: 5px 7px;
+  min-height: 28px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  background: #141414;
   border: 1px solid #404040;
   color: #a3a3a3;
   font: 500 9px var(--font-mono);
+}
+
+.debug-toggle.is-active {
+  color: #111;
+  background: #d6a85d;
+  border-color: #d6a85d;
 }
 
 .studio {
@@ -204,8 +216,168 @@ button {
 .pose-canvas {
   position: absolute;
   inset: 0;
-  z-index: 2;
+  z-index: 4;
   pointer-events: none;
+}
+
+.pose-guide-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.shot-frame {
+  position: absolute;
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.08) 1px, transparent 1px),
+    linear-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px),
+    rgba(0, 0, 0, 0.06);
+  background-size: 24px 24px;
+  box-shadow:
+    0 0 0 999px rgba(0, 0, 0, 0.1),
+    inset 0 0 34px rgba(255, 255, 255, 0.04);
+}
+
+.shot-frame::before,
+.shot-frame::after {
+  content: "";
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border-color: currentColor;
+  border-style: solid;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.shot-frame::before {
+  top: -1px;
+  left: -1px;
+  border-width: 1px 0 0 1px;
+}
+
+.shot-frame::after {
+  right: -1px;
+  bottom: -1px;
+  border-width: 0 1px 1px 0;
+}
+
+.shot-frame span {
+  position: absolute;
+  top: -28px;
+  left: 0;
+  padding: 5px 7px;
+  color: rgba(255, 255, 255, 0.78);
+  background: rgba(8, 8, 8, 0.58);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  font: 500 8px var(--font-mono);
+}
+
+.pose-guide-overlay.is-ready .shot-frame {
+  border-color: rgba(134, 239, 172, 0.86);
+  box-shadow:
+    0 0 0 999px rgba(0, 0, 0, 0.08),
+    0 0 28px rgba(74, 222, 128, 0.16);
+}
+
+.pose-guide-overlay.is-adjust .shot-frame,
+.pose-guide-overlay.is-near .shot-frame {
+  border-color: rgba(214, 168, 93, 0.82);
+}
+
+.pose-silhouette {
+  position: absolute;
+  top: 14%;
+  left: 50%;
+  width: 168px;
+  height: 410px;
+  max-height: 68%;
+  opacity: 0.16;
+  transform: translateX(-50%);
+}
+
+.pose-silhouette i {
+  position: absolute;
+  display: block;
+  border: 1px solid rgba(255, 255, 255, 0.85);
+}
+
+.silhouette-head {
+  top: 0;
+  left: 50%;
+  width: 42px;
+  height: 52px;
+  border-radius: 50%;
+  transform: translateX(-50%);
+}
+
+.silhouette-body {
+  top: 62px;
+  left: 50%;
+  width: 86px;
+  height: 190px;
+  border-radius: 50% 50% 42% 42%;
+  transform: translateX(-50%);
+}
+
+.silhouette-left-arm,
+.silhouette-right-arm {
+  top: 92px;
+  width: 46px;
+  height: 150px;
+  border-radius: 999px;
+}
+
+.silhouette-left-arm {
+  left: 13px;
+  transform: rotate(13deg);
+}
+
+.silhouette-right-arm {
+  right: 13px;
+  transform: rotate(-13deg);
+}
+
+.subject-bounds {
+  position: absolute;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.guide-hint-dot {
+  position: absolute;
+  max-width: min(300px, calc(100% - 36px));
+  padding: 9px 11px;
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(8, 8, 8, 0.68);
+  border: 1px solid rgba(214, 168, 93, 0.38);
+  backdrop-filter: blur(10px);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.guide-hint-dot::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: -5px;
+  width: 8px;
+  height: 8px;
+  background: #d6a85d;
+  border-radius: 50%;
+  transform: translateY(-50%);
+  box-shadow: 0 0 18px rgba(214, 168, 93, 0.55);
+}
+
+.guide-hint-dot-1 {
+  right: 20px;
+  top: 88px;
+}
+
+.guide-hint-dot-2 {
+  left: 24px;
+  top: 45%;
 }
 
 .pose-guide-frames {
@@ -774,6 +946,37 @@ button {
   font-size: 9px;
 }
 
+.beauty-panel {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #292929;
+}
+
+.beauty-options {
+  margin-top: 9px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.beauty-options button {
+  min-height: 34px;
+  padding: 0 8px;
+  cursor: pointer;
+  color: #9a9a9a;
+  background: #171717;
+  border: 1px solid #303030;
+  border-radius: 3px;
+  font-size: 10px;
+}
+
+.beauty-options button.is-selected {
+  color: #111;
+  background: #d6a85d;
+  border-color: #d6a85d;
+  font-weight: 600;
+}
+
 .shutter-area {
   margin-top: auto;
   padding-top: 24px;
@@ -926,6 +1129,19 @@ button {
   margin: 0;
   color: #777;
   font-size: 12px;
+}
+
+.result-meta {
+  margin-top: 18px;
+  display: grid;
+  gap: 7px;
+  color: #a3a3a3;
+  font-size: 11px;
+}
+
+.result-meta span {
+  padding-bottom: 7px;
+  border-bottom: 1px solid #252525;
 }
 
 .result-actions {

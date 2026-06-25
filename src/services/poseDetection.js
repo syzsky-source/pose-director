@@ -1,21 +1,17 @@
-import { FilesetResolver, PoseLandmarker } from "@mediapipe/tasks-vision";
+import {
+  FaceLandmarker,
+  FilesetResolver,
+  PoseLandmarker,
+} from "@mediapipe/tasks-vision";
+import { checkComposition } from "./compositionCheck";
+import { scorePose } from "./poseScoring";
 
 const WASM_PATH =
   "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm";
-const MODEL_PATH =
+const POSE_MODEL_PATH =
   "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task";
-
-const MIN_VISIBILITY = 0.45;
-const MIN_LIMB_VISIBILITY = 0.35;
-
-const LEFT_RIGHT_PAIRS = [
-  ["leftShoulder", "rightShoulder"],
-  ["leftElbow", "rightElbow"],
-  ["leftWrist", "rightWrist"],
-  ["leftHip", "rightHip"],
-  ["leftKnee", "rightKnee"],
-  ["leftAnkle", "rightAnkle"],
-];
+const FACE_MODEL_PATH =
+  "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task";
 
 const LANDMARK_INDEXES = {
   head: 0,
@@ -33,61 +29,84 @@ const LANDMARK_INDEXES = {
   rightAnkle: 28,
 };
 
-const ANGLE_FEATURES = [
-  ["leftElbow", "leftShoulder", "leftElbow", "leftWrist", 1],
-  ["rightElbow", "rightShoulder", "rightElbow", "rightWrist", 1],
-  ["leftKnee", "leftHip", "leftKnee", "leftAnkle", 1],
-  ["rightKnee", "rightHip", "rightKnee", "rightAnkle", 1],
-  ["leftShoulder", "leftElbow", "leftShoulder", "neck", 0.75],
-  ["rightShoulder", "rightElbow", "rightShoulder", "neck", 0.75],
-  ["leftHip", "leftShoulder", "leftHip", "leftKnee", 0.85],
-  ["rightHip", "rightShoulder", "rightHip", "rightKnee", 0.85],
-];
+let visionPromise;
+let poseLandmarkerPromise;
+let faceLandmarkerPromise;
 
-const POSITION_FEATURES = [
-  "leftWrist",
-  "rightWrist",
-  "leftElbow",
-  "rightElbow",
-  "leftKnee",
-  "rightKnee",
-  "leftAnkle",
-  "rightAnkle",
-];
+function getVision() {
+  if (!visionPromise) {
+    visionPromise = FilesetResolver.forVisionTasks(WASM_PATH);
+  }
 
-let landmarkerPromise;
+  return visionPromise;
+}
 
 async function getPoseLandmarker() {
-  if (!landmarkerPromise) {
-    landmarkerPromise = FilesetResolver.forVisionTasks(WASM_PATH).then(
-      (vision) =>
+  if (!poseLandmarkerPromise) {
+    poseLandmarkerPromise = getVision().then((vision) =>
+      PoseLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: POSE_MODEL_PATH,
+          delegate: "GPU",
+        },
+        runningMode: "VIDEO",
+        numPoses: 1,
+        minPoseDetectionConfidence: 0.5,
+        minPosePresenceConfidence: 0.5,
+        minTrackingConfidence: 0.5,
+      }).catch(() =>
         PoseLandmarker.createFromOptions(vision, {
           baseOptions: {
-            modelAssetPath: MODEL_PATH,
-            delegate: "GPU",
+            modelAssetPath: POSE_MODEL_PATH,
+            delegate: "CPU",
           },
           runningMode: "VIDEO",
           numPoses: 1,
           minPoseDetectionConfidence: 0.5,
           minPosePresenceConfidence: 0.5,
           minTrackingConfidence: 0.5,
-        }).catch(() =>
-          PoseLandmarker.createFromOptions(vision, {
-            baseOptions: {
-              modelAssetPath: MODEL_PATH,
-              delegate: "CPU",
-            },
-            runningMode: "VIDEO",
-            numPoses: 1,
-            minPoseDetectionConfidence: 0.5,
-            minPosePresenceConfidence: 0.5,
-            minTrackingConfidence: 0.5,
-          }),
-        ),
+        }),
+      ),
     );
   }
 
-  return landmarkerPromise;
+  return poseLandmarkerPromise;
+}
+
+async function getFaceLandmarker() {
+  if (!faceLandmarkerPromise) {
+    faceLandmarkerPromise = getVision().then((vision) =>
+      FaceLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: FACE_MODEL_PATH,
+          delegate: "GPU",
+        },
+        runningMode: "VIDEO",
+        numFaces: 1,
+        minFaceDetectionConfidence: 0.5,
+        minFacePresenceConfidence: 0.5,
+        minTrackingConfidence: 0.5,
+      }).catch(() =>
+        FaceLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: FACE_MODEL_PATH,
+            delegate: "CPU",
+          },
+          runningMode: "VIDEO",
+          numFaces: 1,
+          minFaceDetectionConfidence: 0.5,
+          minFacePresenceConfidence: 0.5,
+          minTrackingConfidence: 0.5,
+        }),
+      ),
+    );
+  }
+
+  return faceLandmarkerPromise;
+}
+
+function clamp01(value) {
+  return Math.min(Math.max(value, 0), 1);
 }
 
 function normalizeLandmark(landmark) {
@@ -97,10 +116,6 @@ function normalizeLandmark(landmark) {
     z: landmark.z ?? 0,
     visibility: landmark.visibility ?? landmark.presence ?? 1,
   };
-}
-
-function clamp01(value) {
-  return Math.min(Math.max(value, 0), 1);
 }
 
 function averagePoint(first, second) {
@@ -126,283 +141,85 @@ function toPoseKeypoints(landmarks) {
   return points;
 }
 
-function hasReliableBody(points) {
-  const corePoints = [
-    points.head,
-    points.leftShoulder,
-    points.rightShoulder,
-    points.leftHip,
-    points.rightHip,
-  ];
-  const limbPoints = [
-    points.leftElbow,
-    points.rightElbow,
-    points.leftWrist,
-    points.rightWrist,
-    points.leftKnee,
-    points.rightKnee,
-    points.leftAnkle,
-    points.rightAnkle,
-  ];
+function summarizeFace(faceLandmarks) {
+  const landmarks = faceLandmarks?.[0];
 
-  return (
-    corePoints.every((point) => point.visibility >= MIN_VISIBILITY) &&
-    limbPoints.filter((point) => point.visibility >= MIN_LIMB_VISIBILITY)
-      .length >= 6
-  );
-}
+  if (!landmarks?.length) return null;
 
-function toVector(from, to) {
-  return {
-    x: to.x - from.x,
-    y: to.y - from.y,
+  const points = landmarks.map((landmark) => ({
+    x: clamp01(1 - landmark.x),
+    y: clamp01(landmark.y),
+    z: landmark.z ?? 0,
+  }));
+  const bounds = {
+    minX: Math.min(...points.map((point) => point.x)),
+    maxX: Math.max(...points.map((point) => point.x)),
+    minY: Math.min(...points.map((point) => point.y)),
+    maxY: Math.max(...points.map((point) => point.y)),
   };
-}
 
-function angleBetween(first, second) {
-  const dot = first.x * second.x + first.y * second.y;
-  const firstLength = Math.hypot(first.x, first.y);
-  const secondLength = Math.hypot(second.x, second.y);
-
-  if (!firstLength || !secondLength) return 0;
-
-  const cosine = Math.min(Math.max(dot / (firstLength * secondLength), -1), 1);
-  return (Math.acos(cosine) * 180) / Math.PI;
-}
-
-function lineAngle(first, second) {
-  return (Math.atan2(second.y - first.y, second.x - first.x) * 180) / Math.PI;
-}
-
-function angleDifference(first, second) {
-  let diff = Math.abs(first - second) % 360;
-  if (diff > 180) diff = 360 - diff;
-  return diff;
-}
-
-function pointFromTemplate(templatePoint) {
   return {
-    x: templatePoint[0],
-    y: templatePoint[1],
-    z: 0,
-    visibility: 1,
-  };
-}
-
-function buildTemplatePoints(template) {
-  const points = Object.fromEntries(
-    Object.entries(template.skeleton).map(([name, point]) => [
-      name,
-      pointFromTemplate(point),
-    ]),
-  );
-
-  if (!points.leftHip || !points.rightHip) {
-    const hipSpread = 0.08;
-    points.leftHip = {
-      ...points.hip,
-      x: clamp01(points.hip.x - hipSpread),
-    };
-    points.rightHip = {
-      ...points.hip,
-      x: clamp01(points.hip.x + hipSpread),
-    };
-  }
-
-  return points;
-}
-
-function mirrorPoint(point) {
-  return {
-    ...point,
-    x: clamp01(1 - point.x),
-  };
-}
-
-function mirrorTemplatePoints(points) {
-  const mirrored = {};
-
-  for (const [name, point] of Object.entries(points)) {
-    mirrored[name] = mirrorPoint(point);
-  }
-
-  for (const [leftName, rightName] of LEFT_RIGHT_PAIRS) {
-    mirrored[leftName] = mirrorPoint(points[rightName]);
-    mirrored[rightName] = mirrorPoint(points[leftName]);
-  }
-
-  return mirrored;
-}
-
-function postureScale(points) {
-  const shoulderWidth = Math.hypot(
-    points.leftShoulder.x - points.rightShoulder.x,
-    points.leftShoulder.y - points.rightShoulder.y,
-  );
-  const bodyHeight = Math.max(
-    Math.abs(points.head.y - points.leftAnkle.y),
-    Math.abs(points.head.y - points.rightAnkle.y),
-  );
-
-  return Math.max(shoulderWidth, bodyHeight * 0.35, 0.12);
-}
-
-function scoreFromDistance(distance, tolerance) {
-  return Math.max(0, 1 - Math.pow(distance / tolerance, 1.35));
-}
-
-function scoreAngles(points, templatePoints) {
-  let total = 0;
-  let weightTotal = 0;
-
-  for (const [name, a, b, c, weight] of ANGLE_FEATURES) {
-    if (
-      !points[a] ||
-      !points[b] ||
-      !points[c] ||
-      points[a].visibility < MIN_VISIBILITY ||
-      points[b].visibility < MIN_VISIBILITY ||
-      points[c].visibility < MIN_VISIBILITY
-    ) {
-      continue;
-    }
-
-    const currentAngle = angleBetween(
-      toVector(points[b], points[a]),
-      toVector(points[b], points[c]),
-    );
-    const templateAngle = angleBetween(
-      toVector(templatePoints[b], templatePoints[a]),
-      toVector(templatePoints[b], templatePoints[c]),
-    );
-    const score = scoreFromDistance(
-      angleDifference(currentAngle, templateAngle),
-      name.includes("Elbow") || name.includes("Knee") ? 96 : 82,
-    );
-
-    total += score * weight;
-    weightTotal += weight;
-  }
-
-  return weightTotal ? total / weightTotal : 0;
-}
-
-function scoreLine(firstCurrent, secondCurrent, firstTarget, secondTarget, tolerance) {
-  return scoreFromDistance(
-    angleDifference(
-      lineAngle(firstCurrent, secondCurrent),
-      lineAngle(firstTarget, secondTarget),
-    ),
-    tolerance,
-  );
-}
-
-function scoreBodyLines(points, templatePoints) {
-  const shoulderLine = scoreLine(
-    points.leftShoulder,
-    points.rightShoulder,
-    templatePoints.leftShoulder,
-    templatePoints.rightShoulder,
-    58,
-  );
-  const torsoLine = scoreLine(
-    points.neck,
-    points.hip,
-    templatePoints.neck,
-    templatePoints.hip,
-    54,
-  );
-
-  return shoulderLine * 0.45 + torsoLine * 0.55;
-}
-
-function scoreLimbPositions(points, templatePoints) {
-  const currentScale = postureScale(points);
-  const templateScale = postureScale(templatePoints);
-  let total = 0;
-  let count = 0;
-
-  for (const name of POSITION_FEATURES) {
-    const point = points[name];
-    const target = templatePoints[name];
-
-    if (!point || !target || point.visibility < MIN_VISIBILITY) continue;
-
-    const currentOffset = {
-      x: (point.x - points.neck.x) / currentScale,
-      y: (point.y - points.neck.y) / currentScale,
-    };
-    const targetOffset = {
-      x: (target.x - templatePoints.neck.x) / templateScale,
-      y: (target.y - templatePoints.neck.y) / templateScale,
-    };
-    const distance = Math.hypot(
-      currentOffset.x - targetOffset.x,
-      currentOffset.y - targetOffset.y,
-    );
-
-    total += scoreFromDistance(distance, 2.15);
-    count += 1;
-  }
-
-  return count ? total / count : 0;
-}
-
-function calculateMatchScore(points, template) {
-  const templatePoints = buildTemplatePoints(template);
-  const normalScore = calculateTemplateScore(points, templatePoints);
-  const mirroredScore = calculateTemplateScore(
     points,
-    mirrorTemplatePoints(templatePoints),
-  );
-
-  return Math.round(Math.max(normalScore, mirroredScore));
+    bounds,
+  };
 }
 
-function calculateTemplateScore(points, templatePoints) {
-  const angleScore = scoreAngles(points, templatePoints);
-  const bodyLineScore = scoreBodyLines(points, templatePoints);
-  const limbScore = scoreLimbPositions(points, templatePoints);
-  const rawScore = angleScore * 0.42 + bodyLineScore * 0.23 + limbScore * 0.35;
-  const calibratedScore = 12 + rawScore * 88;
-
-  return Math.min(100, Math.max(0, calibratedScore));
+function shouldRunFace(template) {
+  return ["halfBody", "closeUp"].includes(template?.shotType);
 }
 
 export async function detectPose(videoElement, template, timestamp) {
   if (!videoElement?.videoWidth || !videoElement?.videoHeight) {
     return {
       keypoints: null,
+      faceLandmarks: null,
       score: 0,
       detected: false,
+      composition: { passed: false, score: 0, hints: ["未检测到画面"] },
+      scoreResult: null,
+      hints: ["未检测到画面"],
     };
   }
 
   const poseLandmarker = await getPoseLandmarker();
-  const result = poseLandmarker.detectForVideo(videoElement, timestamp);
-  const landmarks = result.landmarks?.[0];
+  const poseResult = poseLandmarker.detectForVideo(videoElement, timestamp);
+  const landmarks = poseResult.landmarks?.[0];
 
   if (!landmarks) {
     return {
       keypoints: null,
+      faceLandmarks: null,
       score: 0,
       detected: false,
+      composition: { passed: false, score: 0, hints: ["未检测到人体，请进入画面"] },
+      scoreResult: null,
+      hints: ["未检测到人体，请进入画面"],
     };
   }
 
   const keypoints = toPoseKeypoints(landmarks);
+  let faceLandmarks = null;
 
-  if (!hasReliableBody(keypoints)) {
-    return {
-      keypoints: null,
-      score: 0,
-      detected: false,
-    };
+  if (shouldRunFace(template)) {
+    const faceLandmarker = await getFaceLandmarker();
+    const faceResult = faceLandmarker.detectForVideo(videoElement, timestamp);
+    faceLandmarks = summarizeFace(faceResult.faceLandmarks);
   }
+
+  const composition = checkComposition(
+    keypoints,
+    faceLandmarks,
+    template?.shotType ?? "fullBody",
+  );
+  const scoreResult = scorePose(keypoints, template, composition);
 
   return {
     keypoints,
-    score: calculateMatchScore(keypoints, template),
+    faceLandmarks,
+    score: scoreResult.score,
     detected: true,
+    composition,
+    scoreResult,
+    hints: scoreResult.hints,
   };
 }
