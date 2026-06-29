@@ -10,8 +10,10 @@ import {
 } from "lucide-react";
 import MatchMeter from "./components/MatchMeter";
 import PoseGuideOverlay from "./components/PoseGuideOverlay";
+import PoseGuideFrames from "./components/PoseGuideFrames";
 import PoseCanvas from "./components/PoseCanvas";
 import { POSES } from "./data/poses";
+import { BASE_POSE_RULES, getPoseRule } from "./data/poseRules";
 import { TUTORIALS } from "./data/tutorials";
 import { useCamera } from "./hooks/useCamera";
 import { BEAUTY_MODES } from "./services/beautyService";
@@ -19,10 +21,8 @@ import {
   captureHighResolutionPhoto,
   revokeCapturedPhoto,
 } from "./services/captureService";
-import { detectPose } from "./services/poseDetection";
+import { detectPose, resetPoseSmoothing } from "./services/poseDetection";
 
-const COUNTDOWN_SECONDS = 3;
-const SCORE_SMOOTHING_ALPHA = 0.38;
 const DEFAULT_VIDEO_SIZE = {
   videoWidth: 1280,
   videoHeight: 960,
@@ -41,6 +41,12 @@ export default function App() {
   const [poseResult, setPoseResult] = useState({
     detected: false,
     keypoints: null,
+    rawScore: 0,
+    featureScores: {},
+    weakestFeature: null,
+    correctionMessage: "未检测到人体，请进入画面",
+    status: "adjusting",
+    statusMessage: "未检测到人体，请进入画面",
     composition: null,
     scoreResult: null,
     hints: ["未检测到人体，请进入画面"],
@@ -49,27 +55,27 @@ export default function App() {
   const capturedRef = useRef(false);
   const countdownRef = useRef(null);
   const stableSinceRef = useRef(null);
-  const smoothedScoreRef = useRef(null);
   const capturedPhotoRef = useRef(null);
   const activeTutorial = TUTORIALS.find(
     (tutorial) => tutorial.id === activeTutorialId,
   );
   const activeBasePose = activeTutorial ? null : POSES[selectedPoseIndex];
-  const currentPose = activeTutorial?.pose ?? POSES[selectedPoseIndex];
-  const scoringEnabled = activeTutorial?.scoringEnabled !== false;
-  const autoCapture = currentPose.autoCapture ?? {
-    enabled: false,
-    threshold: 76,
-    stableMs: 1600,
-  };
-  const autoCaptureEnabled = autoCapture.enabled === true;
-  const readyScore = autoCapture.threshold ?? 76;
-  const stableReadyMs = autoCapture.stableMs ?? 1600;
+  const currentRule = activeTutorial
+    ? getPoseRule(activeTutorial.ruleId)
+    : BASE_POSE_RULES[selectedPoseIndex];
+  const scoringEnabled =
+    currentRule.scoringEnabled === true && currentRule.mode !== "guideOnly";
+  const autoCapture = currentRule.autoCapture;
+  const autoCaptureEnabled =
+    currentRule.mode === "autoCapture" && autoCapture.enabled === true;
+  const readyScore = autoCapture.threshold;
+  const stableReadyMs = autoCapture.stableMs;
+  const countdownSeconds = autoCapture.countdownSeconds;
 
   const resetSession = useCallback(() => {
     capturedRef.current = false;
     stableSinceRef.current = null;
-    smoothedScoreRef.current = null;
+    resetPoseSmoothing();
     setCapturedPhoto((photo) => {
       revokeCapturedPhoto(photo);
       return null;
@@ -79,6 +85,12 @@ export default function App() {
     setPoseResult({
       detected: false,
       keypoints: null,
+      rawScore: 0,
+      featureScores: {},
+      weakestFeature: null,
+      correctionMessage: "未检测到人体，请进入画面",
+      status: "adjusting",
+      statusMessage: "未检测到人体，请进入画面",
       composition: null,
       scoreResult: null,
       hints: ["未检测到人体，请进入画面"],
@@ -102,14 +114,14 @@ export default function App() {
 
     capturedRef.current = true;
     stableSinceRef.current = null;
-    smoothedScoreRef.current = null;
+    resetPoseSmoothing(currentRule.id);
     setCountdown(null);
     const photo = await captureHighResolutionPhoto(video, beautyMode);
     setCapturedPhoto((previousPhoto) => {
       revokeCapturedPhoto(previousPhoto);
       return photo;
     });
-  }, [beautyMode, videoRef]);
+  }, [beautyMode, currentRule.id, videoRef]);
 
   useEffect(() => {
     resetSession();
@@ -134,13 +146,19 @@ export default function App() {
     if (status !== "ready" || capturedPhoto) return undefined;
     if (!scoringEnabled) {
       stableSinceRef.current = null;
-      smoothedScoreRef.current = null;
+      resetPoseSmoothing(currentRule.id);
       setPoseResult({
         detected: false,
         keypoints: null,
+        rawScore: 0,
+        featureScores: {},
+        weakestFeature: null,
+        correctionMessage: currentRule.instruction,
+        status: "adjusting",
+        statusMessage: "坐姿引导练习，首版暂不自动评分",
         composition: null,
         scoreResult: null,
-        hints: [currentPose.instruction],
+        hints: ["坐姿引导练习，首版暂不自动评分"],
       });
       setScore(0);
       setCountdown(null);
@@ -179,7 +197,7 @@ export default function App() {
         countdownRef.current === null &&
         !capturedRef.current
       ) {
-        setCountdown(COUNTDOWN_SECONDS);
+        setCountdown(countdownSeconds);
       }
     };
 
@@ -191,36 +209,16 @@ export default function App() {
         updateVideoSize();
 
         try {
-          const result = await detectPose(videoRef.current, currentPose, timestamp);
+          const result = await detectPose(
+            videoRef.current,
+            currentRule,
+            timestamp,
+          );
 
           if (active) {
-            const nextScore = result.detected
-              ? Math.round(
-                  smoothedScoreRef.current === null
-                    ? result.score
-                    : smoothedScoreRef.current * (1 - SCORE_SMOOTHING_ALPHA) +
-                        result.score * SCORE_SMOOTHING_ALPHA,
-                )
-              : 0;
-            smoothedScoreRef.current = result.detected ? nextScore : null;
-            const smoothedResult = {
-              ...result,
-              score: nextScore,
-            };
-
-            setPoseResult({
-              detected: smoothedResult.detected,
-              keypoints: smoothedResult.keypoints,
-              faceLandmarks: smoothedResult.faceLandmarks,
-              composition: smoothedResult.composition,
-              scoreResult: {
-                ...smoothedResult.scoreResult,
-                score: nextScore,
-              },
-              hints: smoothedResult.hints,
-            });
-            setScore(smoothedResult.score);
-            updateReadyState(smoothedResult, timestamp);
+            setPoseResult(result);
+            setScore(result.score);
+            updateReadyState(result, timestamp);
           }
         } catch (detectionError) {
           console.error("Pose detection failed", detectionError);
@@ -228,12 +226,18 @@ export default function App() {
             setPoseResult({
               detected: false,
               keypoints: null,
+              rawScore: 0,
+              featureScores: {},
+              weakestFeature: null,
+              correctionMessage: "姿势识别暂时失败，请保持画面稳定",
+              status: "adjusting",
+              statusMessage: "姿势识别暂时失败，请保持画面稳定",
               composition: null,
               scoreResult: null,
               hints: ["姿势识别暂时失败，请保持画面稳定"],
             });
             setScore(0);
-            smoothedScoreRef.current = null;
+            resetPoseSmoothing(currentRule.id);
             stableSinceRef.current = null;
             setCountdown(null);
           }
@@ -251,7 +255,8 @@ export default function App() {
   }, [
     autoCaptureEnabled,
     capturedPhoto,
-    currentPose,
+    countdownSeconds,
+    currentRule,
     readyScore,
     scoringEnabled,
     stableReadyMs,
@@ -294,12 +299,12 @@ export default function App() {
   const isPoseQualified =
     scoringEnabled &&
     poseResult.detected &&
-    poseResult.scoreResult?.hardRules?.passed &&
-    poseResult.composition?.passed &&
-    score >= readyScore;
+    poseResult.scoreResult?.passed === true;
   const isReadyToShoot = isPoseQualified && autoCaptureEnabled;
   const instructionText = poseResult.detected
-    ? poseResult.hints?.join(" / ") || currentPose.instruction
+    ? poseResult.status === "adjusting"
+      ? poseResult.correctionMessage
+      : poseResult.statusMessage
     : "未检测到人体，请进入画面";
 
   const startTutorialPractice = (tutorial) => {
@@ -373,9 +378,23 @@ export default function App() {
             <>
               <PoseGuideOverlay
                 detected={poseResult.detected}
-                pose={currentPose}
-                scoreResult={poseResult.scoreResult}
+                rule={currentRule}
+                status={poseResult.status}
+                correctionMessage={
+                  scoringEnabled
+                    ? ["adjusting", "nearTarget"].includes(poseResult.status)
+                      ? poseResult.correctionMessage
+                      : poseResult.statusMessage
+                    : currentRule.instruction
+                }
                 composition={poseResult.composition}
+              />
+              <PoseGuideFrames
+                rule={currentRule}
+                status={poseResult.status}
+                detected={poseResult.detected}
+                scoringEnabled={scoringEnabled}
+                videoSize={videoSize}
               />
               {debugMode && (
                 <PoseCanvas
@@ -387,7 +406,7 @@ export default function App() {
                 <div className="no-person-message">
                   {scoringEnabled
                     ? "未检测到人体，请进入画面"
-                    : "引导练习模式：请对齐画面中的分区框"}
+                    : "坐姿引导练习，首版暂不自动评分"}
                 </div>
               )}
               <div className="frame-corners" aria-hidden="true">
@@ -414,7 +433,7 @@ export default function App() {
           {!capturedPhoto && (
             <div className="direction-panel">
               <div className="direction-copy">
-                <span className="eyebrow">导演指令 · {currentPose.number}</span>
+                <span className="eyebrow">导演指令 · {currentRule.number}</span>
                 <p className={isReadyToShoot ? "ready-message" : ""}>
                   {isReadyToShoot ? (
                     <>
@@ -427,14 +446,14 @@ export default function App() {
                       姿势合格，继续保持
                     </>
                   ) : !scoringEnabled ? (
-                    activeTutorial?.pose.instruction
+                    "坐姿引导练习，首版暂不自动评分"
                   ) : (
                     instructionText
                   )}
                 </p>
               </div>
               {scoringEnabled ? (
-                <MatchMeter score={score} />
+                <MatchMeter score={score} status={poseResult.status} />
               ) : (
                 <div className="guide-practice-badge">
                   <strong>GUIDE</strong>
@@ -453,7 +472,7 @@ export default function App() {
             </div>
             <span className="pose-count">
               {activeTutorial
-                ? `${activeTutorial.pose.number} · 教程`
+                ? `${currentRule.number} · 教程`
                 : `${selectedPoseIndex + 1} / ${POSES.length}`}
             </span>
           </div>
@@ -494,6 +513,23 @@ export default function App() {
             {activeTutorial && (
               <div className="active-tutorial-chip">
                 当前练习：{activeTutorial.title}
+              </div>
+            )}
+
+            {activeTutorial && currentRule.mode === "guideOnly" && (
+              <div className="active-tutorial-reference">
+                <img
+                  src={activeTutorial.image}
+                  alt={`${activeTutorial.title}动作参考`}
+                />
+                <div>
+                  <strong>动作参考</strong>
+                  <ul>
+                    {activeTutorial.tips.map((tip) => (
+                      <li key={tip}>{tip}</li>
+                    ))}
+                  </ul>
+                </div>
               </div>
             )}
 
@@ -563,11 +599,13 @@ export default function App() {
             <div>
               <strong>{autoCaptureEnabled ? "自动快门已开启" : "手动拍摄模式"}</strong>
               <span>
-                {!autoCaptureEnabled
-                  ? "当前姿势仅显示评分和纠正建议，不会自动拍照。"
-                  : `匹配度达到 ${readyScore}% 并稳定 ${
+                {currentRule.mode === "guideOnly"
+                  ? "坐姿引导练习，首版暂不自动评分；可使用手动快门拍摄。"
+                  : currentRule.mode === "assist"
+                    ? "辅助评分和纠错已开启，不会触发自动倒计时。"
+                    : `匹配度达到 ${readyScore}% 并稳定 ${
                       stableReadyMs / 1000
-                    } 秒，且构图和关键动作合格后自动倒计时。`}
+                    } 秒后进入 ${countdownSeconds} 秒自动倒计时。`}
               </span>
             </div>
           </div>
@@ -584,7 +622,7 @@ export default function App() {
             <div className="result-content">
               <span className="eyebrow">拍摄完成</span>
               <h2>这一张，很有感觉。</h2>
-              <p>{currentPose.name} · 最终匹配度 {score}%</p>
+              <p>{currentRule.name} · 最终匹配度 {score}%</p>
               <div className="result-meta">
                 <span>图片尺寸：{capturedPhoto.width} × {capturedPhoto.height}</span>
                 <span>文件大小：{capturedPhoto.sizeLabel}</span>
@@ -601,7 +639,7 @@ export default function App() {
                 <a
                   className="primary-button"
                   href={capturedPhoto.url}
-                  download={`pose-director-${currentPose.id}.jpg`}
+                  download={`pose-director-${currentRule.id}.jpg`}
                 >
                   <Download size={16} />
                   保存照片

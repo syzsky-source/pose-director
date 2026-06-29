@@ -1,50 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 
-const GUIDE_ZONES = [
-  {
-    id: "head",
-    label: "头部框",
-    points: ["head", "neck"],
-    paddingX: 0.07,
-    paddingY: 0.055,
-  },
-  {
-    id: "shoulders",
-    label: "肩线框",
-    points: ["leftShoulder", "rightShoulder"],
-    paddingX: 0.075,
-    paddingY: 0.05,
-  },
-  {
-    id: "torso",
-    label: "躯干框",
-    points: ["leftShoulder", "rightShoulder", "leftHip", "rightHip"],
-    paddingX: 0.055,
-    paddingY: 0.045,
-  },
-  {
-    id: "arms",
-    label: "手臂方向框",
-    points: [
-      "leftShoulder",
-      "rightShoulder",
-      "leftElbow",
-      "rightElbow",
-      "leftWrist",
-      "rightWrist",
-    ],
-    paddingX: 0.055,
-    paddingY: 0.055,
-  },
-  {
-    id: "feet",
-    label: "腿部 / 双脚底座框",
-    points: ["leftHip", "rightHip", "leftKnee", "rightKnee", "leftAnkle", "rightAnkle"],
-    paddingX: 0.065,
-    paddingY: 0.045,
-  },
-];
-
 function getStagePoint(point, layout) {
   const sourceX = point[0] * layout.videoWidth;
   const sourceY = point[1] * layout.videoHeight;
@@ -70,10 +25,10 @@ function getCoverLayout(stageWidth, stageHeight, videoSize) {
   };
 }
 
-function getGuideState(score, scoringEnabled) {
-  if (!scoringEnabled) return "neutral";
-  if (score >= 72) return "ready";
-  if (score >= 50) return "near";
+function getGuideState(status, scoringEnabled, detected) {
+  if (!scoringEnabled || !detected) return "neutral";
+  if (status === "qualified" || status === "excellent") return "ready";
+  if (status === "nearTarget") return "near";
   return "idle";
 }
 
@@ -87,10 +42,12 @@ function getGuideBox(skeleton, zone, layout, stageWidth, stageHeight) {
   const maxX = Math.max(...points.map((point) => point.x));
   const minY = Math.min(...points.map((point) => point.y));
   const maxY = Math.max(...points.map((point) => point.y));
-  const left = Math.max(0, minX - zone.paddingX * stageWidth);
-  const top = Math.max(0, minY - zone.paddingY * stageHeight);
-  const right = Math.min(stageWidth, maxX + zone.paddingX * stageWidth);
-  const bottom = Math.min(stageHeight, maxY + zone.paddingY * stageHeight);
+  const paddingX = zone.padding?.x ?? 0.04;
+  const paddingY = zone.padding?.y ?? 0.04;
+  const left = Math.max(0, minX - paddingX * stageWidth);
+  const top = Math.max(0, minY - paddingY * stageHeight);
+  const right = Math.min(stageWidth, maxX + paddingX * stageWidth);
+  const bottom = Math.min(stageHeight, maxY + paddingY * stageHeight);
 
   return {
     left: `${(left / stageWidth) * 100}%`,
@@ -129,16 +86,21 @@ function useElementSize() {
 }
 
 export default function PoseGuideFrames({
-  pose,
-  score,
+  rule,
+  status,
+  detected,
   scoringEnabled = true,
   videoSize,
 }) {
   const [containerRef, stageSize] = useElementSize();
 
-  if (!pose?.skeleton) return null;
+  if (!rule?.template?.points || !rule?.guideFrame) return null;
 
-  const state = getGuideState(score, scoringEnabled);
+  const state = getGuideState(status, scoringEnabled, detected);
+  const zones = Object.entries(rule.guideFrame).map(([id, zone]) => ({
+    id,
+    ...zone,
+  }));
   const canLayout =
     stageSize.width > 0 &&
     stageSize.height > 0 &&
@@ -155,12 +117,14 @@ export default function PoseGuideFrames({
       aria-hidden="true"
     >
       {layout &&
-        GUIDE_ZONES.map((zone) => (
+        zones.map((zone) => (
           <div
             key={zone.id}
-            className={`guide-zone guide-zone-${zone.id}`}
+            className={`guide-zone guide-zone-${zone.id} ${
+              zone.points.length === 3 ? "is-direction-zone" : ""
+            }`}
             style={getGuideBox(
-              pose.skeleton,
+              rule.template.points,
               zone,
               layout,
               stageSize.width,

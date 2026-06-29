@@ -1,63 +1,3 @@
-const MIN_CORE_VISIBILITY = 0.48;
-const MIN_LIMB_VISIBILITY = 0.34;
-
-const REQUIRED_BY_SHOT = {
-  fullBody: [
-    "head",
-    "leftShoulder",
-    "rightShoulder",
-    "leftHip",
-    "rightHip",
-    "leftKnee",
-    "rightKnee",
-    "leftAnkle",
-    "rightAnkle",
-  ],
-  threeQuarter: [
-    "head",
-    "leftShoulder",
-    "rightShoulder",
-    "leftHip",
-    "rightHip",
-    "leftKnee",
-    "rightKnee",
-  ],
-  halfBody: [
-    "head",
-    "leftShoulder",
-    "rightShoulder",
-    "leftElbow",
-    "rightElbow",
-    "leftWrist",
-    "rightWrist",
-    "leftHip",
-    "rightHip",
-  ],
-  closeUp: ["head", "leftShoulder", "rightShoulder"],
-};
-
-const ANGLE_FEATURES = [
-  ["leftElbow", "leftShoulder", "leftElbow", "leftWrist", 1],
-  ["rightElbow", "rightShoulder", "rightElbow", "rightWrist", 1],
-  ["leftKnee", "leftHip", "leftKnee", "leftAnkle", 0.85],
-  ["rightKnee", "rightHip", "rightKnee", "rightAnkle", 0.85],
-  ["leftShoulder", "leftElbow", "leftShoulder", "neck", 0.7],
-  ["rightShoulder", "rightElbow", "rightShoulder", "neck", 0.7],
-  ["leftHip", "leftShoulder", "leftHip", "leftKnee", 0.75],
-  ["rightHip", "rightShoulder", "rightHip", "rightKnee", 0.75],
-];
-
-const POSITION_FEATURES = [
-  "leftWrist",
-  "rightWrist",
-  "leftElbow",
-  "rightElbow",
-  "leftKnee",
-  "rightKnee",
-  "leftAnkle",
-  "rightAnkle",
-];
-
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
@@ -100,13 +40,13 @@ function lineAngle(first, second) {
 }
 
 function angleDifference(first, second) {
-  let diff = Math.abs(first - second) % 360;
-  if (diff > 180) diff = 360 - diff;
-  return diff;
+  let difference = Math.abs(first - second) % 360;
+  if (difference > 180) difference = 360 - difference;
+  return difference;
 }
 
-function scoreFromDistance(value, tolerance) {
-  return clamp(1 - Math.pow(value / tolerance, 1.35), 0, 1);
+function scoreFromDifference(value, tolerance) {
+  return clamp(1 - Math.pow(value / Math.max(tolerance, 0.001), 1.35), 0, 1);
 }
 
 function pointFromTemplate(point) {
@@ -118,9 +58,9 @@ function pointFromTemplate(point) {
   };
 }
 
-function buildTemplatePoints(template) {
+function buildTemplatePoints(rule) {
   const points = Object.fromEntries(
-    Object.entries(template.skeleton).map(([name, point]) => [
+    Object.entries(rule.template?.points ?? {}).map(([name, point]) => [
       name,
       pointFromTemplate(point),
     ]),
@@ -137,400 +77,396 @@ function buildTemplatePoints(template) {
   return points;
 }
 
-function hasPoint(points, name, minimum = MIN_CORE_VISIBILITY) {
-  return Boolean(points?.[name] && (points[name].visibility ?? 1) >= minimum);
-}
-
-function visibleRatio(points, shotType = "fullBody") {
-  const required = REQUIRED_BY_SHOT[shotType] ?? REQUIRED_BY_SHOT.fullBody;
-  const visible = required.filter((name) =>
-    hasPoint(points, name, name.includes("Ankle") ? MIN_LIMB_VISIBILITY : MIN_CORE_VISIBILITY),
+function isVisible(point, minimumVisibility) {
+  return Boolean(
+    point && (point.visibility ?? point.presence ?? 1) >= minimumVisibility,
   );
-
-  return visible.length / required.length;
 }
 
 function bodyScale(points) {
+  if (!points.leftShoulder || !points.rightShoulder || !points.head) return 0.12;
+
   const shoulderWidth = distance(points.leftShoulder, points.rightShoulder);
-  const hipWidth = points.leftHip && points.rightHip
-    ? distance(points.leftHip, points.rightHip)
-    : shoulderWidth;
-  const bodyHeight = points.leftAnkle && points.rightAnkle
-    ? Math.max(distance(points.head, points.leftAnkle), distance(points.head, points.rightAnkle))
-    : Math.max(distance(points.head, points.leftHip), distance(points.head, points.rightHip));
+  const hipWidth =
+    points.leftHip && points.rightHip
+      ? distance(points.leftHip, points.rightHip)
+      : shoulderWidth;
+  const lowerPoint =
+    points.leftAnkle && points.rightAnkle
+      ? midpoint(points.leftAnkle, points.rightAnkle)
+      : points.hip ?? midpoint(points.leftShoulder, points.rightShoulder);
+  const bodyHeight = distance(points.head, lowerPoint);
 
   return Math.max(shoulderWidth, hipWidth, bodyHeight * 0.32, 0.12);
 }
 
-function lineScore(points, templatePoints, first, second, tolerance) {
-  if (!points[first] || !points[second] || !templatePoints[first] || !templatePoints[second]) {
-    return 0;
-  }
+function getFeaturePoints(points, names, minimumVisibility) {
+  const selected = names.map((name) => points[name]);
+  return selected.every((point) => isVisible(point, minimumVisibility))
+    ? selected
+    : null;
+}
 
-  return scoreFromDistance(
-    angleDifference(
-      lineAngle(points[first], points[second]),
-      lineAngle(templatePoints[first], templatePoints[second]),
-    ),
-    tolerance,
+function evaluateAngleFeature(points, templatePoints, feature, tolerance) {
+  const current = getFeaturePoints(
+    points,
+    feature.points,
+    tolerance.minimumVisibility,
   );
-}
+  const target = feature.points.map((name) => templatePoints[name]);
 
-function scoreAngles(points, templatePoints) {
-  let total = 0;
-  let weightTotal = 0;
+  if (!current || target.some((point) => !point)) return null;
 
-  for (const [name, a, b, c, weight] of ANGLE_FEATURES) {
-    if (
-      !hasPoint(points, a, MIN_LIMB_VISIBILITY) ||
-      !hasPoint(points, b, MIN_LIMB_VISIBILITY) ||
-      !hasPoint(points, c, MIN_LIMB_VISIBILITY) ||
-      !templatePoints[a] ||
-      !templatePoints[b] ||
-      !templatePoints[c]
-    ) {
-      continue;
-    }
-
-    const currentAngle = angleBetween(vector(points[b], points[a]), vector(points[b], points[c]));
-    const targetAngle = angleBetween(
-      vector(templatePoints[b], templatePoints[a]),
-      vector(templatePoints[b], templatePoints[c]),
-    );
-    const tolerance = name.includes("Elbow") || name.includes("Knee") ? 70 : 62;
-    total += scoreFromDistance(angleDifference(currentAngle, targetAngle), tolerance) * weight;
-    weightTotal += weight;
-  }
-
-  return weightTotal ? total / weightTotal : 0;
-}
-
-function scorePositions(points, templatePoints) {
-  const currentScale = bodyScale(points);
-  const targetScale = bodyScale(templatePoints);
-  let total = 0;
-  let count = 0;
-
-  for (const name of POSITION_FEATURES) {
-    if (
-      !hasPoint(points, name, MIN_LIMB_VISIBILITY) ||
-      !templatePoints[name] ||
-      !points.neck ||
-      !templatePoints.neck
-    ) {
-      continue;
-    }
-
-    const current = {
-      x: (points[name].x - points.neck.x) / currentScale,
-      y: (points[name].y - points.neck.y) / currentScale,
-    };
-    const target = {
-      x: (templatePoints[name].x - templatePoints.neck.x) / targetScale,
-      y: (templatePoints[name].y - templatePoints.neck.y) / targetScale,
-    };
-
-    total += scoreFromDistance(Math.hypot(current.x - target.x, current.y - target.y), 1.05);
-    count += 1;
-  }
-
-  return count ? total / count : 0;
-}
-
-function shoulderTilt(points) {
-  return Math.abs(points.leftShoulder.y - points.rightShoulder.y);
-}
-
-function hipTilt(points) {
-  if (!points.leftHip || !points.rightHip) return 0;
-  return Math.abs(points.leftHip.y - points.rightHip.y);
-}
-
-function isFrontFacing(points) {
-  const shoulderWidth = Math.abs(points.leftShoulder.x - points.rightShoulder.x);
-  const hipWidth = Math.abs(points.leftHip.x - points.rightHip.x);
-  const shoulderCenter = midpoint(points.leftShoulder, points.rightShoulder);
-  const hipCenter = midpoint(points.leftHip, points.rightHip);
-
-  return shoulderWidth > 0.15 && hipWidth > 0.08 && Math.abs(shoulderCenter.x - hipCenter.x) < 0.08;
-}
-
-function isSideOrThreeQuarter(points) {
-  const shoulderWidth = Math.abs(points.leftShoulder.x - points.rightShoulder.x);
-  const hipWidth = Math.abs(points.leftHip.x - points.rightHip.x);
-
-  return shoulderWidth < 0.24 || hipWidth < 0.15;
-}
-
-function wristsInChestBand(points) {
-  const top = Math.min(points.leftShoulder.y, points.rightShoulder.y) - 0.03;
-  const bottom = Math.max(points.leftHip.y, points.rightHip.y) + 0.02;
-  const left = Math.min(points.leftShoulder.x, points.rightShoulder.x) - 0.15;
-  const right = Math.max(points.leftShoulder.x, points.rightShoulder.x) + 0.15;
-
-  return ["leftWrist", "rightWrist"].every((name) => {
-    const point = points[name];
-    return point.x >= left && point.x <= right && point.y >= top && point.y <= bottom;
-  });
-}
-
-function armsCrossed(points) {
-  const centerX = (points.leftShoulder.x + points.rightShoulder.x + points.leftHip.x + points.rightHip.x) / 4;
-  const leftCrosses = points.leftWrist.x > centerX || points.leftWrist.x > points.rightElbow.x - 0.02;
-  const rightCrosses = points.rightWrist.x < centerX || points.rightWrist.x < points.leftElbow.x + 0.02;
-  const wristsClose = Math.abs(points.leftWrist.y - points.rightWrist.y) < 0.18;
-  const elbowBend =
-    angleBetween(vector(points.leftElbow, points.leftShoulder), vector(points.leftElbow, points.leftWrist)) < 150 &&
-    angleBetween(vector(points.rightElbow, points.rightShoulder), vector(points.rightElbow, points.rightWrist)) < 150;
-
-  return wristsInChestBand(points) && leftCrosses && rightCrosses && wristsClose && elbowBend;
-}
-
-function handsDown(points) {
-  return (
-    points.leftWrist.y > points.leftElbow.y &&
-    points.rightWrist.y > points.rightElbow.y &&
-    points.leftWrist.y > points.leftHip.y - 0.02 &&
-    points.rightWrist.y > points.rightHip.y - 0.02
+  const currentAngle = angleBetween(
+    vector(current[1], current[0]),
+    vector(current[1], current[2]),
   );
-}
-
-function handsNearFace(points) {
-  return (
-    distance(points.leftWrist, points.head) < 0.24 ||
-    distance(points.rightWrist, points.head) < 0.24
-  );
-}
-
-function handsAtWaist(points) {
-  const centerY = (points.leftHip.y + points.rightHip.y + points.leftShoulder.y + points.rightShoulder.y) / 2;
-  return (
-    Math.abs(points.leftWrist.y - centerY) < 0.16 ||
-    Math.abs(points.rightWrist.y - centerY) < 0.16
-  );
-}
-
-function hasWeightShift(points) {
-  const hipCenter = midpoint(points.leftHip, points.rightHip);
-  const ankleCenter = midpoint(points.leftAnkle, points.rightAnkle);
-  return Math.abs(hipCenter.x - ankleCenter.x) > 0.035;
-}
-
-function feetStaggered(points) {
-  return Math.abs(points.leftAnkle.y - points.rightAnkle.y) > 0.025 ||
-    Math.abs(points.leftAnkle.x - points.rightAnkle.x) > 0.18;
-}
-
-function stanceStable(points) {
-  return (
-    Math.abs(points.leftAnkle.x - points.rightAnkle.x) > 0.09 &&
-    Math.abs(points.leftKnee.x - points.rightKnee.x) > 0.06
-  );
-}
-
-const RULE_CHECKS = {
-  crossedArms: {
-    test: armsCrossed,
-    hint: "双手抬到胸前，并交叉抱住手臂",
-    cap: 55,
-  },
-  frontFacing: {
-    test: isFrontFacing,
-    hint: "身体再正对镜头一点",
-    cap: 60,
-  },
-  sideFacing: {
-    test: isSideOrThreeQuarter,
-    hint: "身体侧转一些，形成侧身层次",
-    cap: 65,
-  },
-  handsDown: {
-    test: handsDown,
-    hint: "双臂自然下垂，手不要叉腰或抱胸",
-    cap: 60,
-  },
-  handsNearFace: {
-    test: handsNearFace,
-    hint: "把手靠近脸侧，形成更松弛的轮廓",
-    cap: 64,
-  },
-  handsAtWaist: {
-    test: handsAtWaist,
-    hint: "把一只手移到腰侧或口袋附近",
-    cap: 66,
-  },
-  levelShoulders: {
-    test: (points) => shoulderTilt(points) < 0.045,
-    hint: "把肩线放平，避免一边肩膀塌下去",
-    cap: 68,
-  },
-  levelHips: {
-    test: (points) => hipTilt(points) < 0.055,
-    hint: "髋部保持稳定，不要明显歪斜",
-    cap: 68,
-  },
-  weightShift: {
-    test: hasWeightShift,
-    hint: "把重心落到一侧，姿态会更有张力",
-    cap: 66,
-  },
-  feetStaggered: {
-    test: feetStaggered,
-    hint: "把一只脚向前错开半步",
-    cap: 66,
-  },
-  stableLegs: {
-    test: stanceStable,
-    hint: "请保持双腿自然站稳",
-    cap: 62,
-  },
-};
-
-function evaluateHardRules(points, template) {
-  const failed = [];
-  let cap = 100;
-
-  for (const ruleName of template.hardRules ?? []) {
-    const rule = RULE_CHECKS[ruleName];
-    if (!rule || rule.test(points)) continue;
-
-    failed.push({
-      rule: ruleName,
-      hint: rule.hint,
-      cap: rule.cap,
-    });
-    cap = Math.min(cap, rule.cap);
-  }
-
-  return {
-    passed: failed.length === 0,
-    failed,
-    cap,
-  };
-}
-
-function scoreBodyOrientation(points, templatePoints, template) {
-  const shoulder = lineScore(points, templatePoints, "leftShoulder", "rightShoulder", 42);
-  const hip = points.leftHip && points.rightHip
-    ? lineScore(points, templatePoints, "leftHip", "rightHip", 50)
-    : shoulder;
-  const torso = points.neck && points.hip && templatePoints.neck && templatePoints.hip
-    ? lineScore(points, templatePoints, "neck", "hip", 48)
-    : 0.7;
-  const ruleBonus =
-    template.hardRules?.includes("frontFacing") && isFrontFacing(points)
-      ? 1
-      : template.hardRules?.includes("sideFacing") && isSideOrThreeQuarter(points)
-        ? 1
-        : 0.75;
-
-  return clamp((shoulder * 0.34 + hip * 0.26 + torso * 0.24 + ruleBonus * 0.16), 0, 1);
-}
-
-function scoreStability(points) {
-  const shoulder = scoreFromDistance(shoulderTilt(points), 0.09);
-  const hip = points.leftHip && points.rightHip ? scoreFromDistance(hipTilt(points), 0.1) : 0.8;
-  const legs = points.leftAnkle && points.rightAnkle ? (stanceStable(points) ? 1 : 0.55) : 0.7;
-
-  return shoulder * 0.4 + hip * 0.28 + legs * 0.32;
-}
-
-export function scorePose(points, template, composition = { passed: true, score: 100 }) {
-  if (!points || !template?.skeleton) {
-    return {
-      score: 0,
-      passed: false,
-      canAutoCapture: false,
-      cap: 0,
-      hardRules: { passed: false, failed: [] },
-      breakdown: {
-        composition: 0,
-        orientation: 0,
-        angles: 0,
-        action: 0,
-        stability: 0,
-      },
-      hints: ["未检测到人体，请进入画面"],
-    };
-  }
-
-  const shotType = template.shotType ?? "fullBody";
-  const visibility = visibleRatio(points, shotType);
-  const templatePoints = buildTemplatePoints(template);
-  const hardRules = evaluateHardRules(points, template);
-  const positionScore = scorePositions(points, templatePoints);
-  const actionScore = hardRules.passed
-    ? positionScore
-    : clamp(positionScore - hardRules.failed.length * 0.24, 0.2, 0.65);
-  const breakdown = {
-    composition: (composition.passed ? 1 : composition.score / 100) * 20,
-    orientation: scoreBodyOrientation(points, templatePoints, template) * 20,
-    angles: scoreAngles(points, templatePoints) * 25,
-    action: actionScore * 25,
-    stability: scoreStability(points) * 10,
-  };
-  const rawScore = Object.values(breakdown).reduce((total, value) => total + value, 0);
-  const visibilityCap = visibility < 0.72 ? 48 : visibility < 0.9 ? 72 : 100;
-  const compositionCap = composition.passed ? 100 : 68;
-  const finalCap = Math.min(hardRules.cap, visibilityCap, compositionCap);
-  const score = Math.round(clamp(rawScore, 0, finalCap));
-  const hints = getCorrectionHints(points, template, composition, hardRules);
+  const targetAngle =
+    feature.targetAngle ??
+    angleBetween(vector(target[1], target[0]), vector(target[1], target[2]));
+  const difference = angleDifference(currentAngle, targetAngle);
+  const score =
+    scoreFromDifference(
+      difference,
+      feature.tolerance ?? tolerance.angleDegrees,
+    ) * 100;
 
   return {
     score,
-    passed: score >= (template.autoCapture?.threshold ?? 72) && hardRules.passed && composition.passed,
-    canAutoCapture:
-      template.autoCapture?.enabled === true &&
-      score >= (template.autoCapture?.threshold ?? 72) &&
-      hardRules.passed &&
-      composition.passed,
-    cap: finalCap,
-    hardRules,
-    breakdown: Object.fromEntries(
-      Object.entries(breakdown).map(([name, value]) => [name, Math.round(value)]),
-    ),
-    hints,
+    value: currentAngle,
+    target: targetAngle,
+    difference,
   };
 }
 
-export function getCorrectionHints(points, template, composition, hardRules) {
-  if (!points) return ["未检测到人体，请进入画面"];
+function evaluateBodyLineFeature(points, templatePoints, feature, tolerance) {
+  const current = getFeaturePoints(
+    points,
+    feature.points,
+    tolerance.minimumVisibility,
+  );
+  const target = feature.points.map((name) => templatePoints[name]);
 
-  const hints = [];
+  if (!current || target.some((point) => !point)) return null;
 
-  if (composition && !composition.passed) {
-    hints.push(...composition.hints);
-  }
+  const currentAngle = lineAngle(current[0], current[1]);
+  const targetAngle =
+    feature.targetAngle ?? lineAngle(target[0], target[1]);
+  const difference = angleDifference(currentAngle, targetAngle);
+  const score =
+    scoreFromDifference(
+      difference,
+      feature.tolerance ?? tolerance.bodyLineDegrees,
+    ) * 100;
 
-  if (hardRules?.failed?.length) {
-    hints.push(...hardRules.failed.map((rule) => rule.hint));
-  }
-
-  if (!hints.length && template.hardRules?.includes("levelShoulders") && shoulderTilt(points) > 0.025) {
-    hints.push("右肩或左肩再微调一下，让肩线更平");
-  }
-
-  if (!hints.length && template.hardRules?.includes("feetStaggered") && !feetStaggered(points)) {
-    hints.push("把右脚向前踩半步");
-  }
-
-  if (!hints.length) {
-    hints.push(template.instruction ?? "保持当前姿势，做一点细微调整");
-  }
-
-  return [...new Set(hints)].slice(0, 2);
+  return {
+    score,
+    value: currentAngle,
+    target: targetAngle,
+    difference,
+  };
 }
 
-export const poseRuleDescriptions = {
-  crossedArms: "双腕位于胸前或上腹区域，前臂明显跨过身体中线，双肘弯曲；不满足时最高 55 分。",
-  frontFacing: "身体正面对镜头，肩宽和髋宽可见且躯干中心稳定；明显侧身时封顶 60 分。",
-  sideFacing: "身体需要侧身或三分之二侧身，肩髋宽度和模板方向一致；正立时封顶 65 分。",
-  handsDown: "双臂自然下垂，不能叉腰、抱胸或大幅抬手；不满足时最高 60 分。",
-  handsNearFace: "至少一只手靠近脸侧形成松弛侧身动作；不满足时最高 64 分。",
-  handsAtWaist: "至少一只手位于腰侧、髋部或口袋附近；不满足时最高 66 分。",
-  levelShoulders: "双肩基本水平，避免明显一高一低；不满足时最高 68 分。",
-  levelHips: "双髋基本水平并稳定；不满足时最高 68 分。",
-  weightShift: "重心需要有明确偏移，不能只是直立平均站姿；不满足时最高 66 分。",
-  feetStaggered: "双脚需要前后或左右错开形成层次；不满足时最高 66 分。",
-  stableLegs: "双腿自然站稳，膝踝关系不能过度交叉或塌陷；不满足时最高 62 分。",
-};
+function evaluateRelativePositionFeature(
+  points,
+  templatePoints,
+  feature,
+  tolerance,
+) {
+  const current = getFeaturePoints(
+    points,
+    [feature.point, feature.anchor],
+    tolerance.minimumVisibility,
+  );
+  const target = [templatePoints[feature.point], templatePoints[feature.anchor]];
+
+  if (!current || target.some((point) => !point)) return null;
+
+  const currentScale = bodyScale(points);
+  const targetScale = bodyScale(templatePoints);
+  const currentOffset = {
+    x: (current[0].x - current[1].x) / currentScale,
+    y: (current[0].y - current[1].y) / currentScale,
+  };
+  const targetOffset = feature.targetOffset ?? {
+    x: (target[0].x - target[1].x) / targetScale,
+    y: (target[0].y - target[1].y) / targetScale,
+  };
+  const difference = Math.hypot(
+    currentOffset.x - targetOffset.x,
+    currentOffset.y - targetOffset.y,
+  );
+  const score =
+    scoreFromDifference(
+      difference,
+      feature.tolerance ?? tolerance.relativePosition,
+    ) * 100;
+
+  return {
+    score,
+    value: currentOffset,
+    target: targetOffset,
+    difference,
+  };
+}
+
+function evaluateFeatureGroup(
+  groupName,
+  features,
+  evaluator,
+  points,
+  templatePoints,
+  tolerance,
+) {
+  const featureScores = {};
+  let weightedTotal = 0;
+  let weightTotal = 0;
+
+  for (const feature of features ?? []) {
+    const result = evaluator(points, templatePoints, feature, tolerance);
+    const weight = feature.weight ?? 1;
+    const score = result?.score ?? 0;
+
+    featureScores[feature.id] = {
+      id: feature.id,
+      label: feature.label,
+      group: groupName,
+      score: Math.round(score),
+      weight,
+      reliable: Boolean(result),
+      value: result?.value ?? null,
+      target: result?.target ?? null,
+      difference: result?.difference ?? null,
+    };
+    weightedTotal += score * weight;
+    weightTotal += weight;
+  }
+
+  return {
+    score: weightTotal ? weightedTotal / weightTotal : 0,
+    featureScores,
+  };
+}
+
+function getRequiredPointNames(rule) {
+  const scoring = rule.scoring;
+  const names = new Set();
+
+  for (const feature of scoring.angleFeatures ?? []) {
+    feature.points.forEach((name) => names.add(name));
+  }
+  for (const feature of scoring.bodyLineFeatures ?? []) {
+    feature.points.forEach((name) => names.add(name));
+  }
+  for (const feature of scoring.relativePositionFeatures ?? []) {
+    names.add(feature.point);
+    names.add(feature.anchor);
+  }
+
+  return [...names];
+}
+
+function getVisibilityRatio(points, rule) {
+  const minimumVisibility = rule.scoring.tolerance.minimumVisibility;
+  const required = getRequiredPointNames(rule);
+  if (!required.length) return 1;
+
+  return (
+    required.filter((name) => isVisible(points[name], minimumVisibility)).length /
+    required.length
+  );
+}
+
+function resolveStatus(score, rule) {
+  const feedback = rule.feedbackRules;
+  const qualificationScore =
+    rule.autoCapture.threshold || feedback.qualified.minScore;
+
+  if (score >= feedback.excellent.minScore) return "excellent";
+  if (score >= qualificationScore) return "qualified";
+  if (score >= feedback.nearTarget.minScore) return "nearTarget";
+  return "adjusting";
+}
+
+function getStatusMessage(status, rule) {
+  const feedbackKey = {
+    adjusting: "lowScore",
+    nearTarget: "nearTarget",
+    qualified: "qualified",
+    excellent: "excellent",
+  }[status];
+
+  return rule.feedbackRules[feedbackKey]?.message ?? rule.instruction;
+}
+
+function getWeakestFeature(featureScores) {
+  const reliableScores = Object.values(featureScores).filter(
+    (feature) => feature.reliable,
+  );
+  const candidates = reliableScores.length
+    ? reliableScores
+    : Object.values(featureScores);
+
+  return (
+    candidates.reduce(
+      (weakest, feature) =>
+        !weakest || feature.score < weakest.score ? feature : weakest,
+      null,
+    ) ?? null
+  );
+}
+
+function evaluateRule(points, rule, composition) {
+  const templatePoints = buildTemplatePoints(rule);
+  const tolerance = rule.scoring.tolerance;
+  const angleResult = evaluateFeatureGroup(
+    "angles",
+    rule.scoring.angleFeatures,
+    evaluateAngleFeature,
+    points,
+    templatePoints,
+    tolerance,
+  );
+  const bodyLineResult = evaluateFeatureGroup(
+    "bodyLines",
+    rule.scoring.bodyLineFeatures,
+    evaluateBodyLineFeature,
+    points,
+    templatePoints,
+    tolerance,
+  );
+  const relativePositionResult = evaluateFeatureGroup(
+    "relativePositions",
+    rule.scoring.relativePositionFeatures,
+    evaluateRelativePositionFeature,
+    points,
+    templatePoints,
+    tolerance,
+  );
+  const groupScores = {
+    angles: angleResult.score,
+    bodyLines: bodyLineResult.score,
+    relativePositions: relativePositionResult.score,
+  };
+  const featureScores = {
+    ...angleResult.featureScores,
+    ...bodyLineResult.featureScores,
+    ...relativePositionResult.featureScores,
+  };
+  const weights = rule.scoring.featureWeights;
+  const poseWeight = Object.values(weights).reduce(
+    (total, weight) => total + weight,
+    0,
+  );
+  const poseScore = poseWeight
+    ? Object.entries(weights).reduce(
+        (total, [group, weight]) => total + (groupScores[group] ?? 0) * weight,
+        0,
+      ) / poseWeight
+    : 0;
+  const compositionWeight = clamp(tolerance.compositionWeight ?? 0, 0, 0.5);
+  const compositionScore = composition?.score ?? 100;
+  const weightedScore =
+    poseScore * (1 - compositionWeight) +
+    compositionScore * compositionWeight;
+  const visibilityRatio = getVisibilityRatio(points, rule);
+  const minimumVisibleRatio = tolerance.minimumVisibleRatio;
+  const visibilityCap =
+    visibilityRatio < minimumVisibleRatio
+      ? 52
+      : visibilityRatio < 0.9
+        ? 76
+        : 100;
+  const rawScore = Math.round(clamp(weightedScore, 0, visibilityCap));
+  const weakestFeature = getWeakestFeature(featureScores);
+
+  return {
+    rawScore,
+    featureScores,
+    groupScores: Object.fromEntries(
+      Object.entries(groupScores).map(([name, score]) => [
+        name,
+        Math.round(score),
+      ]),
+    ),
+    weakestFeature,
+    visibilityRatio,
+  };
+}
+
+function swapSideName(name) {
+  if (name.startsWith("left")) return `right${name.slice(4)}`;
+  if (name.startsWith("right")) return `left${name.slice(5)}`;
+  return name;
+}
+
+function mirrorKeypoints(points) {
+  return Object.fromEntries(
+    Object.entries(points).map(([name, point]) => {
+      const source = points[swapSideName(name)] ?? point;
+      return [
+        name,
+        {
+          ...source,
+          x: 1 - source.x,
+        },
+      ];
+    }),
+  );
+}
+
+export function scorePose(
+  points,
+  rule,
+  composition = { passed: true, score: 100 },
+) {
+  if (!points || !rule?.scoring || !rule?.template?.points) {
+    return {
+      rawScore: 0,
+      featureScores: {},
+      weakestFeature: null,
+      correctionMessage:
+        rule?.feedbackRules?.detectedFalse ?? "未检测到人体，请进入画面",
+      status: "adjusting",
+      statusMessage:
+        rule?.feedbackRules?.detectedFalse ?? "未检测到人体，请进入画面",
+      mirrored: false,
+      passed: false,
+      canAutoCapture: false,
+      visibilityRatio: 0,
+      groupScores: {},
+    };
+  }
+
+  const regular = evaluateRule(points, rule, composition);
+  const mirrored =
+    rule.mirrorAllowed === true
+      ? evaluateRule(mirrorKeypoints(points), rule, composition)
+      : null;
+  const best =
+    mirrored && mirrored.rawScore > regular.rawScore ? mirrored : regular;
+  const usedMirror = best === mirrored;
+  const status = resolveStatus(best.rawScore, rule);
+  const correctionMessage =
+    rule.correctionRules.byFeature?.[best.weakestFeature?.id] ??
+    best.weakestFeature?.label ??
+    rule.correctionRules.fallback ??
+    rule.instruction;
+  const passed =
+    ["qualified", "excellent"].includes(status) &&
+    best.visibilityRatio >= rule.scoring.tolerance.minimumVisibleRatio &&
+    composition.passed;
+
+  return {
+    ...best,
+    correctionMessage,
+    status,
+    statusMessage: getStatusMessage(status, rule),
+    mirrored: usedMirror,
+    passed,
+    canAutoCapture:
+      rule.mode === "autoCapture" &&
+      rule.autoCapture.enabled === true &&
+      passed,
+  };
+}

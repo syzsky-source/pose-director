@@ -10,7 +10,6 @@ export const POSES = [
       threshold: 78,
       stableMs: 1600,
     },
-    hardRules: ["sideFacing", "feetStaggered", "weightShift", "levelShoulders"],
     skeleton: {
       head: [0.5, 0.16],
       neck: [0.5, 0.25],
@@ -40,7 +39,6 @@ export const POSES = [
       threshold: 76,
       stableMs: 1600,
     },
-    hardRules: ["handsAtWaist", "levelShoulders", "stableLegs"],
     skeleton: {
       head: [0.5, 0.15],
       neck: [0.49, 0.24],
@@ -70,7 +68,6 @@ export const POSES = [
       threshold: 76,
       stableMs: 1600,
     },
-    hardRules: ["sideFacing", "handsNearFace", "feetStaggered"],
     skeleton: {
       head: [0.52, 0.16],
       neck: [0.5, 0.25],

@@ -139,7 +139,7 @@ button {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 330px;
   gap: 22px;
-  align-items: stretch;
+  align-items: start;
 }
 
 .camera-stage {
@@ -216,7 +216,8 @@ button {
 .pose-canvas {
   position: absolute;
   inset: 0;
-  z-index: 4;
+  z-index: 2;
+  opacity: 0.48;
   pointer-events: none;
 }
 
@@ -396,6 +397,25 @@ button {
     rgba(0, 0, 0, 0.04);
   background-size: 14px 14px;
   box-shadow: 0 0 18px rgba(0, 0, 0, 0.22);
+}
+
+.guide-zone.is-direction-zone {
+  background:
+    linear-gradient(135deg, transparent 47%, currentColor 49%, currentColor 51%, transparent 53%),
+    rgba(0, 0, 0, 0.035);
+}
+
+.guide-zone-headZone,
+.guide-zone-shoulderZone,
+.guide-zone-torsoZone,
+.guide-zone-footZone {
+  border-width: 1.5px;
+}
+
+.guide-zone-leftArmZone span,
+.guide-zone-leftLegZone span {
+  right: calc(100% + 5px);
+  left: auto;
 }
 
 .guide-zone::before,
@@ -836,6 +856,38 @@ button {
   background: rgba(214, 168, 93, 0.08);
   border: 1px solid rgba(214, 168, 93, 0.22);
   font-size: 10px;
+}
+
+.active-tutorial-reference {
+  margin-top: 9px;
+  padding: 9px;
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 11px;
+  background: #151515;
+  border: 1px solid #303030;
+}
+
+.active-tutorial-reference img {
+  width: 92px;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  object-position: top center;
+  background: #0b0b0b;
+}
+
+.active-tutorial-reference strong {
+  color: #d6a85d;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.active-tutorial-reference ul {
+  margin: 7px 0 0;
+  padding-left: 14px;
+  color: #a3a3a3;
+  font-size: 9px;
+  line-height: 1.55;
 }
 
 .tutorial-drawer {
